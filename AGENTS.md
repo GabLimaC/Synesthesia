@@ -10,6 +10,7 @@ Three interactive tools for MIDI visualization and composition, all using the
 - **`src/synestesia/composer/app.py`** — piano-roll node-based composer with MIDI import/playback
 - **`src/synestesia/composer_live/app.py`** — composer + real-time MIDI input, hand mute/hide, connection toggling
 - **`src/synestesia/visualizer/app.py`** — MIDI visualizer (Flow view + Piano Roll Tiles/Nodes)
+- **`src/synestesia/visualization/app.py`** — LFI Generative Circle, Circle/Line Visualizer, and Interval Relationship View with tone playback
 
 ### Project structure
 
@@ -29,7 +30,10 @@ synestesia/
 │       ├── composer_live/
 │       │   ├── app.py
 │       │   └── __init__.py        # exposes run()
-│       └── visualizer/
+│       ├── visualizer/
+│       │   ├── app.py
+│       │   └── __init__.py        # exposes run()
+│       └── visualization/
 │           ├── app.py
 │           └── __init__.py        # exposes run()
 ├── tests/
@@ -160,25 +164,24 @@ Implementation note: apply an operator to the numeric ratio, then reduce to [1,2
 
 (Agents should compute these in real time; the table is included for reference and to make behavior explicit.)
 
-| G+^n | reduced ratio | log₂ frac | hue (°) | hex (HSL→sRGB, S=1 L=0.5) |
-|------|---------------:|----------:|--------:|---------------------------:|
-| G+^0 | 1.000000       | 0.000000  | 240.00° | #0000ff (Blue)             |
-| G+^1 | 1.500000       | 0.584963  |  90.59° | #7dff00 (Chartreuse)       |
-| G+^2 | 1.125000       | 0.169925  | 301.17° | #ff00fa (Magenta)          |
-| G+^3 | 1.687500       | 0.754888  | 151.76° | #00ff87 (Spring Green)     |
-| G+^4 | 1.265625       | 0.339850  |   2.35° | #ff0a00 (Red)              |
-| G+^5 | 1.898438       | 0.924813  | 212.93° | #0073ff (Azure)            |
-| G+^6 | 1.423828       | 0.509775  |  63.52° | #f0ff00 (Yellow)           |
-| G+^7 | 1.067871       | 0.094738  | 274.11° | #9100ff (Violet)           |
-| G+^8 | 1.601807       | 0.679700  | 124.69° | #00ff14 (Green)            |
-| G+^9 | 1.201355       | 0.264663  | 335.28° | #ff0069 (Rose)             |
-| G+^10| 1.802032       | 0.849625  | 185.87° | #00e6ff (Cyan)             |
-| G+^11| 1.351524       | 0.434588  |  36.45° | #ff9b00 (Orange)           |
-| G+^12| 1.013643       | 0.019550  | 247.04° | #1e00ff (near Blue — comma) |
+| G+^n  | reduced ratio | log₂ frac | hue (°) | hex (HSL→sRGB, S=1 L=0.5) |
+|-------|---------------:|----------:|--------:|---------------------------:|
+| G+^0  | 1.000000       | 0.000000  | 240.00° | #0000ff (Blue)             |
+| G+^1  | 1.500000       | 0.584963  |  90.59° | #7dff00 (Chartreuse)       |
+| G+^2  | 1.125000       | 0.169925  | 301.17° | #ff00fa (Magenta)          |
+| G+^3  | 1.687500       | 0.754888  | 151.76° | #00ff87 (Spring Green)     |
+| G+^4  | 1.265625       | 0.339850  |   2.35° | #ff0a00 (Red)              |
+| G+^5  | 1.898438       | 0.924813  | 212.93° | #0073ff (Azure)            |
+| G+^6  | 1.423828       | 0.509775  |  63.52° | #f0ff00 (Yellow)           |
+| G+^7  | 1.067871       | 0.094738  | 274.11° | #9100ff (Violet)           |
+| G+^8  | 1.601807       | 0.679700  | 124.69° | #00ff14 (Green)            |
+| G+^9  | 1.201355       | 0.264663  | 335.28° | #ff0069 (Rose)             |
+| G+^10 | 1.802032       | 0.849625  | 185.87° | #00e6ff (Cyan)             |
+| G+^11 | 1.351524       | 0.434588  |  36.45° | #ff9b00 (Orange)           |
+| G+^12 | 1.013643       | 0.019550  | 247.04° | #1e00ff (near Blue — comma) |
 
 ...and so on.
 
-Continue with the rest of the original file content (Frequency reference etc.)
 ### Frequency reference ("canonical" values)
 
 When a base frequency is needed, the **canonical reference** is:
@@ -255,11 +258,13 @@ Connecting lines in `draw_grid` must only connect within each hand group.
 Never draw a line from a left-hand node to a right-hand node.
 
 ### Palette picker
-- `comp.palette_pick` stores a semitone index (0–11), or `None` when inactive
-- SHIFT+click a node to pick its note class
-- When active, matching notes get a brightened border and their column gets colored
-- A floating box in the top-right lists all matching notes
-- Clicking the box clears the selection
+- `comp.palette_pick` (composer) and `settings["palette_pick"]` (visualizer)
+  are **`set()`** of note-class indices (0–11). When empty the picker is inactive.
+- Keyboard shortcuts: `0`–`9` = G0–G9, `-` = G10, `=` = G11, `C` = clear.
+- SHIFT+click a node to pick its note class.
+- When active, matching notes get a brightened border and their column gets colored.
+- A floating box in the top-right lists all matching notes.
+- Clicking the box clears the selection.
 
 ### Tkinter root window
 When spawning file dialogs, use a hidden `_tk_root()` that calls `withdraw()` and
@@ -274,7 +279,7 @@ Never leave tkinter roots alive during the pygame loop.
 
 ## File-specific notes
 
-### composer.py
+### composer/app.py
 - Toolbar at top (TB_H=52px), grid in middle, keyboard at bottom (KB_H=80px)
 - BPM adjustable via +/- buttons or arrow keys
 - Volume slider
@@ -282,9 +287,45 @@ Never leave tkinter roots alive during the pygame loop.
 - Multi-track MIDI: hand determined by track index heuristic
 - Single-track MIDI: split at median pitch gap
 - 128 beat max range, scroll + zoom via mouse wheel
+- Palette pick via SHIFT+click or keyboard 0–9, -, =
+- Click floating palette box to clear
 
-### synesthesia.py / synestv2.py
+### composer_live/app.py
+- Everything from composer, **plus**:
+- Real-time MIDI input via `pygame.midi`
+- **Mute toggle** (`M` key / toolbar button): globally silences playback and live input
+- **Per-hand controls** (`left_toggle`, `right_toggle` buttons):
+  - First click: mute hand (red)
+  - Second click: hide hand (gray)
+  - Third click: unmute/unhide (green)
+- **Connection toggling**: ALT+click a node toggles visibility of the line
+  to the next node in the same hand group. `hidden_connections` stores
+  canonical `(min_idx, max_idx)` tuples.
+- Live notes overlay: notes currently held on a MIDI controller get a brighter
+  border and light up their column in the grid.
+
+### visualizer/app.py
 - MIDI input-driven (keyboard controller expected)
-- Side menu with palette pick, mode toggle, echo/trail sliders
-- synestv2 has dual view: Flow view + Piano Roll (Tiles/Nodes sub-views)
-- trail_columns and node_trail are scrollable visual elements
+- Side menu with palette pick, mode toggle (Relative/Absolute), echo/trail sliders
+- Dual view: Flow view + Piano Roll (Tiles/Nodes sub-views)
+- `trail_columns` and `node_trail` are scrollable visual elements
+- TAB toggles side menu, V switches view
+- Click piano-roll note squares to palette-pick their note class
+
+### visualization/app.py
+- Self-contained visualization page (no MIDI input required). Three modules:
+  1. **Generative Circle** — 12 nodes in equal angular slots (G0–G11).
+     STANDARD mode uses canonical LFI hues; CUSTOM mode lets the user pick
+     a G0 color via tkinter colorchooser and derives the rest via the LFI
+     spiral formula. Shared `ColorState` holds the active palette.
+  2. **Circle / Line Visualizer** — three sequence modes:
+     - GENERATIVE: G0 at slot 0, G1 at slot 1, …
+     - LINEAR: G0, G7, G2, G9, … (frequency order)
+     - CUSTOM: drag nodes to reorder; click to play tone
+     - Spectrum line below the circle shows 2 octaves with smooth hue gradients.
+  3. **Interval Relationship View** — merged circle at top with selectable
+     step relationships (±1 through 6), six detail cards below, fade animations.
+- Uses its own `mk_freq_sound(freq, ...)` based on `FREQ_BASE = 320.0 Hz`
+  (not MIDI note frequencies).
+- `_lfi_lerp(h0, h1, t)` is the **only** permitted hue-blending helper;
+  never blend LFI colours in RGB space.

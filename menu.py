@@ -29,6 +29,12 @@ APPS = [
         "desc": "Real-time MIDI visualizer — Flow view + Piano Roll (Tiles / Nodes)",
         "module": "synestesia.visualizer",
     },
+    {
+        "key": "4",
+        "name": "Visualization Page",
+        "desc": "LFI Generative Circle & interactive Circle/Line Visualizer with tone playback",
+        "module": "synestesia.visualization",
+    },
 ]
 
 _CYAN   = "\033[96m"
@@ -88,7 +94,7 @@ def main():
             # After the app closes, show the menu again
             print_menu()
         else:
-            print(_color(f"  Unknown option '{choice}'. Enter 1, 2, 3, or q.", _DIM))
+            print(_color(f"  Unknown option '{choice}'. Enter 1, 2, 3, 4, or q.", _DIM))
 
 if __name__ == "__main__":
     main()

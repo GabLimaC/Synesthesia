@@ -600,77 +600,155 @@ LFI_LABELS = [f"G{n}" for n in GENERATIVE_ORDER]
 LFI_HUES   = [v_hue(V_OF[n]) for n in GENERATIVE_ORDER]
 
 
-def _draw_hue_gradient_line(surf, a, b, h1, h2, width=2, alpha=1.0):
-    """Draw a straight line with hue gradient from h1 to h2 (never RGB)."""
-    dist = math.hypot(b[0] - a[0], b[1] - a[1])
-    steps = max(1, int(dist / 2))
-    for s in range(steps):
-        t0 = s / steps
-        t1 = (s + 1) / steps
-        sx = a[0] + (b[0] - a[0]) * t0
-        sy = a[1] + (b[1] - a[1]) * t0
-        ex = a[0] + (b[0] - a[0]) * t1
-        ey = a[1] + (b[1] - a[1]) * t1
-        col = _lfi_lerp(h1, h2, (t0 + t1) / 2)
-        if alpha < 1.0:
-            col = (int(col[0] * alpha), int(col[1] * alpha), int(col[2] * alpha))
-        pygame.draw.line(surf, col, (int(sx), int(sy)), (int(ex), int(ey)), width)
+def _build_arc_path(idx_a, idx_b):
+    """Shortest clockwise arc on the generative circle from idx_a to idx_b.
+    Returns list of slot indices, inclusive of both ends."""
+    delta = (idx_b - idx_a) % 12
+    if delta <= 6:
+        return [(idx_a + i) % 12 for i in range(delta + 1)]
+    else:
+        return [(idx_a - i) % 12 for i in range(12 - delta + 1)]
 
-def _draw_hue_gradient_line_offset(surf, a, b, h1, h2, width, gap, alpha=1.0):
+
+def _build_arc_path_ccw(idx_a, idx_b):
+    """Counter-clockwise arc on the generative circle from idx_a to idx_b."""
+    delta = (idx_a - idx_b) % 12
+    return [(idx_a - i) % 12 for i in range(delta + 1)]
+
+
+def _arc_hue(t, arc_slots):
+    """Hue at chord position t (0–1) mapped through the arc path of slot indices."""
+    k = len(arc_slots) - 1
+    if k == 0:
+        return LFI_HUES[arc_slots[0]]
+    arc_t = max(0.0, min(float(k), t * k))
+    seg_idx = min(int(arc_t), k - 1)
+    local_t = arc_t - seg_idx
+    h0 = LFI_HUES[arc_slots[seg_idx]]
+    h1 = LFI_HUES[arc_slots[seg_idx + 1]]
+    return (h0 + (((h1 - h0 + 180.0) % 360.0) - 180.0) * local_t) % 360.0
+
+
+def _col_at_hue(hue, alpha=1.0):
+    col = _hsl(hue, 100.0, 50.0)
+    if alpha < 1.0:
+        col = (int(col[0] * alpha), int(col[1] * alpha), int(col[2] * alpha))
+    return col
+
+
+def _chord_point(a, b, t):
+    return a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+
+
+def _draw_arc_gradient_solid(surf, a, b, arc_slots, width=2, alpha=1.0):
+    dist = math.hypot(b[0] - a[0], b[1] - a[1])
+    n = max(2, int(dist / 2))
+    for i in range(n):
+        t_mid = (i + 0.5) / n
+        col = _col_at_hue(_arc_hue(t_mid, arc_slots), alpha)
+        x0, y0 = _chord_point(a, b, i / n)
+        x1, y1 = _chord_point(a, b, (i + 1) / n)
+        pygame.draw.line(surf, col, (int(x0), int(y0)), (int(x1), int(y1)), width)
+
+
+def _draw_arc_gradient_dashes(surf, a, b, arc_slots, dash=10, gap=6, width=2, alpha=1.0):
+    """Long dashes (step 4)."""
+    dist = math.hypot(b[0] - a[0], b[1] - a[1])
+    cycle = dash + gap
+    n = max(1, int(dist / cycle))
+    for i in range(n):
+        t0 = i * cycle / dist
+        t1 = min(t0 + dash / dist, 1.0)
+        if t1 <= t0:
+            continue
+        seg_n = max(1, int((t1 - t0) * dist / 2))
+        for s in range(seg_n):
+            lt = t0 + (t1 - t0) * s / seg_n
+            rt = t0 + (t1 - t0) * (s + 1) / seg_n
+            col = _col_at_hue(_arc_hue((lt + rt) * 0.5, arc_slots), alpha)
+            x0, y0 = _chord_point(a, b, lt)
+            x1, y1 = _chord_point(a, b, rt)
+            pygame.draw.line(surf, col, (int(x0), int(y0)), (int(x1), int(y1)), width)
+
+
+def _draw_arc_gradient_dot_dashed(surf, a, b, arc_slots, seg=12, width=2, alpha=1.0):
+    """Dash-dot pattern (step 3)."""
+    dist = math.hypot(b[0] - a[0], b[1] - a[1])
+    n = max(1, int(dist / seg))
+    for i in range(n):
+        t0 = i * seg / dist
+        t1 = min((i + 1) * seg / dist, 1.0)
+        if i % 2 == 0:
+            # Dash
+            seg_n = max(1, int((t1 - t0) * dist / 2))
+            for s in range(seg_n):
+                lt = t0 + (t1 - t0) * s / seg_n
+                rt = t0 + (t1 - t0) * (s + 1) / seg_n
+                col = _col_at_hue(_arc_hue((lt + rt) * 0.5, arc_slots), alpha)
+                x0, y0 = _chord_point(a, b, lt)
+                x1, y1 = _chord_point(a, b, rt)
+                pygame.draw.line(surf, col, (int(x0), int(y0)), (int(x1), int(y1)), width)
+        else:
+            # Dot at midpoint
+            t = (t0 + t1) * 0.5
+            col = _col_at_hue(_arc_hue(t, arc_slots), alpha)
+            x, y = _chord_point(a, b, t)
+            pygame.draw.circle(surf, col, (int(x), int(y)), width)
+
+
+def _draw_arc_gradient_dotted(surf, a, b, arc_slots, gap=5, width=2, alpha=1.0):
+    """Evenly spaced dots (step 5)."""
+    dist = math.hypot(b[0] - a[0], b[1] - a[1])
+    n = max(2, int(dist / gap))
+    for i in range(n + 1):
+        t = i / n
+        col = _col_at_hue(_arc_hue(t, arc_slots), alpha)
+        x, y = _chord_point(a, b, t)
+        pygame.draw.circle(surf, col, (int(x), int(y)), width)
+
+
+def _draw_step6_split_line(surf, a, b, cw_arc, ccw_arc, width=4, alpha=1.0):
+    """Step 6: two parallel halves — clockwise arc + counter-clockwise arc."""
     dx = b[0] - a[0]; dy = b[1] - a[1]
     dist = math.hypot(dx, dy)
     if dist == 0:
         return
-    nx = -dy / dist * gap; ny = dx / dist * gap
-    _draw_hue_gradient_line(surf, (a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny), h1, h2, width, alpha)
-    _draw_hue_gradient_line(surf, (a[0] - nx, a[1] - ny), (b[0] - nx, b[1] - ny), h1, h2, width, alpha)
-
-def _draw_step6_split_line(surf, a, b, h1, h2, width=4, alpha=1.0):
-    """Step 6: thick straight line split into two parallel halves.
-    One half follows the shortest hue path, the other the opposite direction."""
-    dx = b[0] - a[0]
-    dy = b[1] - a[1]
-    dist = math.hypot(dx, dy)
-    if dist == 0:
-        return
-    nx = -dy / dist * (width * 0.3)
-    ny = dx / dist * (width * 0.3)
+    nx = -dy / dist * (width * 0.4); ny = dx / dist * (width * 0.4)
     half_w = max(1, width // 2)
-    n = max(2, int(dist / 2))
 
-    # Half 1 — shortest hue path
-    for i in range(n):
-        t0 = i / n
-        sx = a[0] + nx + (b[0] - a[0]) * t0
-        sy = a[1] + ny + (b[1] - a[1]) * t0
-        ex = a[0] + nx + (b[0] - a[0]) * ((i + 1) / n)
-        ey = a[1] + ny + (b[1] - a[1]) * ((i + 1) / n)
-        col = _lfi_lerp(h1, h2, (i + 0.5) / n)
-        if alpha < 1.0:
-            col = (int(col[0] * alpha), int(col[1] * alpha), int(col[2] * alpha))
-        pygame.draw.line(surf, col, (int(sx), int(sy)), (int(ex), int(ey)), half_w)
+    a1 = (a[0] + nx, a[1] + ny); b1 = (b[0] + nx, b[1] + ny)
+    _draw_arc_gradient_solid(surf, a1, b1, cw_arc, half_w, alpha)
 
-    # Half 2 — opposite hue path
-    diff = ((h2 - h1 + 180.0) % 360.0) - 180.0
-    diff_op = diff - 360.0 if diff >= 0 else diff + 360.0
-    for i in range(n):
-        t0 = i / n
-        sx = a[0] - nx + (b[0] - a[0]) * t0
-        sy = a[1] - ny + (b[1] - a[1]) * t0
-        ex = a[0] - nx + (b[0] - a[0]) * ((i + 1) / n)
-        ey = a[1] - ny + (b[1] - a[1]) * ((i + 1) / n)
-        col = _hsl((h1 + diff_op * (i + 0.5) / n) % 360.0, 100.0, 50.0)
-        if alpha < 1.0:
-            col = (int(col[0] * alpha), int(col[1] * alpha), int(col[2] * alpha))
-        pygame.draw.line(surf, col, (int(sx), int(sy)), (int(ex), int(ey)), half_w)
+    a2 = (a[0] - nx, a[1] - ny); b2 = (b[0] - nx, b[1] - ny)
+    _draw_arc_gradient_solid(surf, a2, b2, ccw_arc, half_w, alpha)
 
-def draw_gradient_relation_line(surf, a, b, step, h1, h2, width=2, alpha=1.0):
+
+def draw_gradient_relation_line(surf, a, b, step, a_idx, b_idx, width=2, alpha=1.0):
     if step == 6:
-        _draw_step6_split_line(surf, a, b, h1, h2, width + 1, alpha)
-    elif step == 1:
-        _draw_hue_gradient_line_offset(surf, a, b, h1, h2, width, 3, alpha)
-    else:
-        _draw_hue_gradient_line(surf, a, b, h1, h2, width, alpha)
+        cw_arc = _build_arc_path(a_idx, b_idx)
+        ccw_arc = _build_arc_path_ccw(a_idx, b_idx)
+        _draw_step6_split_line(surf, a, b, cw_arc, ccw_arc, width + 1, alpha)
+        return
+
+    arc = _build_arc_path(a_idx, b_idx)
+    if step == 1:
+        dx = b[0] - a[0]; dy = b[1] - a[1]
+        dist = math.hypot(dx, dy)
+        if dist == 0:
+            return
+        nx = -dy / dist * 3; ny = dx / dist * 3
+        _draw_arc_gradient_solid(surf,
+            (a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny), arc, width, alpha)
+        _draw_arc_gradient_solid(surf,
+            (a[0] - nx, a[1] - ny), (b[0] - nx, b[1] - ny), arc, width, alpha)
+    elif step == 2:
+        _draw_arc_gradient_solid(surf, a, b, arc, width, alpha)
+    elif step == 3:
+        _draw_arc_gradient_dot_dashed(surf, a, b, arc, seg=12, width=width, alpha=alpha)
+    elif step == 4:
+        _draw_arc_gradient_dashes(surf, a, b, arc, dash=10, gap=6, width=width, alpha=alpha)
+    elif step == 5:
+        _draw_arc_gradient_dotted(surf, a, b, arc, gap=5, width=width, alpha=alpha)
 
 
 def _seg_points(p1, p2, n):
@@ -993,9 +1071,7 @@ class IntervalView:
                     b_idx = path[(i + 1) % len(path)]
                     a_pt = pts[i]
                     b_pt = pts[(i + 1) % len(pts)]
-                    h1 = LFI_HUES[a_idx]
-                    h2 = LFI_HUES[b_idx]
-                    draw_gradient_relation_line(surf, a_pt, b_pt, step, h1, h2,
+                    draw_gradient_relation_line(surf, a_pt, b_pt, step, a_idx, b_idx,
                                                  width=max(1, int(2 * alpha)), alpha=alpha)
 
         # Nodes with radial labels

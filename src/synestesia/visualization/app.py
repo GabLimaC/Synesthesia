@@ -616,16 +616,17 @@ def _build_arc_path_ccw(idx_a, idx_b):
     return [(idx_a - i) % 12 for i in range(delta + 1)]
 
 
-def _arc_hue(t, arc_slots):
+def _arc_hue(t, arc_slots, hues=None):
     """Hue at chord position t (0–1) mapped through the arc path of slot indices."""
+    h = hues if hues is not None else LFI_HUES
     k = len(arc_slots) - 1
     if k == 0:
-        return LFI_HUES[arc_slots[0]]
+        return h[arc_slots[0]]
     arc_t = max(0.0, min(float(k), t * k))
     seg_idx = min(int(arc_t), k - 1)
     local_t = arc_t - seg_idx
-    h0 = LFI_HUES[arc_slots[seg_idx]]
-    h1 = LFI_HUES[arc_slots[seg_idx + 1]]
+    h0 = h[arc_slots[seg_idx]]
+    h1 = h[arc_slots[seg_idx + 1]]
     return (h0 + (((h1 - h0 + 180.0) % 360.0) - 180.0) * local_t) % 360.0
 
 
@@ -640,18 +641,18 @@ def _chord_point(a, b, t):
     return a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
 
 
-def _draw_arc_gradient_solid(surf, a, b, arc_slots, width=2, alpha=1.0):
+def _draw_arc_gradient_solid(surf, a, b, arc_slots, width=2, alpha=1.0, hues=None):
     dist = math.hypot(b[0] - a[0], b[1] - a[1])
     n = max(2, int(dist / 2))
     for i in range(n):
         t_mid = (i + 0.5) / n
-        col = _col_at_hue(_arc_hue(t_mid, arc_slots), alpha)
+        col = _col_at_hue(_arc_hue(t_mid, arc_slots, hues), alpha)
         x0, y0 = _chord_point(a, b, i / n)
         x1, y1 = _chord_point(a, b, (i + 1) / n)
         pygame.draw.line(surf, col, (int(x0), int(y0)), (int(x1), int(y1)), width)
 
 
-def _draw_arc_gradient_dashes(surf, a, b, arc_slots, dash=10, gap=6, width=2, alpha=1.0):
+def _draw_arc_gradient_dashes(surf, a, b, arc_slots, dash=10, gap=6, width=2, alpha=1.0, hues=None):
     """Long dashes (step 4)."""
     dist = math.hypot(b[0] - a[0], b[1] - a[1])
     cycle = dash + gap
@@ -665,13 +666,13 @@ def _draw_arc_gradient_dashes(surf, a, b, arc_slots, dash=10, gap=6, width=2, al
         for s in range(seg_n):
             lt = t0 + (t1 - t0) * s / seg_n
             rt = t0 + (t1 - t0) * (s + 1) / seg_n
-            col = _col_at_hue(_arc_hue((lt + rt) * 0.5, arc_slots), alpha)
+            col = _col_at_hue(_arc_hue((lt + rt) * 0.5, arc_slots, hues), alpha)
             x0, y0 = _chord_point(a, b, lt)
             x1, y1 = _chord_point(a, b, rt)
             pygame.draw.line(surf, col, (int(x0), int(y0)), (int(x1), int(y1)), width)
 
 
-def _draw_arc_gradient_dot_dashed(surf, a, b, arc_slots, seg=12, width=2, alpha=1.0):
+def _draw_arc_gradient_dot_dashed(surf, a, b, arc_slots, seg=12, width=2, alpha=1.0, hues=None):
     """Dash-dot pattern (step 3)."""
     dist = math.hypot(b[0] - a[0], b[1] - a[1])
     n = max(1, int(dist / seg))
@@ -679,30 +680,28 @@ def _draw_arc_gradient_dot_dashed(surf, a, b, arc_slots, seg=12, width=2, alpha=
         t0 = i * seg / dist
         t1 = min((i + 1) * seg / dist, 1.0)
         if i % 2 == 0:
-            # Dash
             seg_n = max(1, int((t1 - t0) * dist / 2))
             for s in range(seg_n):
                 lt = t0 + (t1 - t0) * s / seg_n
                 rt = t0 + (t1 - t0) * (s + 1) / seg_n
-                col = _col_at_hue(_arc_hue((lt + rt) * 0.5, arc_slots), alpha)
+                col = _col_at_hue(_arc_hue((lt + rt) * 0.5, arc_slots, hues), alpha)
                 x0, y0 = _chord_point(a, b, lt)
                 x1, y1 = _chord_point(a, b, rt)
                 pygame.draw.line(surf, col, (int(x0), int(y0)), (int(x1), int(y1)), width)
         else:
-            # Dot at midpoint
             t = (t0 + t1) * 0.5
-            col = _col_at_hue(_arc_hue(t, arc_slots), alpha)
+            col = _col_at_hue(_arc_hue(t, arc_slots, hues), alpha)
             x, y = _chord_point(a, b, t)
             pygame.draw.circle(surf, col, (int(x), int(y)), width)
 
 
-def _draw_arc_gradient_dotted(surf, a, b, arc_slots, gap=5, width=2, alpha=1.0):
+def _draw_arc_gradient_dotted(surf, a, b, arc_slots, gap=5, width=2, alpha=1.0, hues=None):
     """Evenly spaced dots (step 5)."""
     dist = math.hypot(b[0] - a[0], b[1] - a[1])
     n = max(2, int(dist / gap))
     for i in range(n + 1):
         t = i / n
-        col = _col_at_hue(_arc_hue(t, arc_slots), alpha)
+        col = _col_at_hue(_arc_hue(t, arc_slots, hues), alpha)
         x, y = _chord_point(a, b, t)
         pygame.draw.circle(surf, col, (int(x), int(y)), width)
 

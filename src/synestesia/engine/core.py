@@ -610,7 +610,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
 
     for idx, cls in enumerate(_LINEAR_SEQ):
         ang = 2 * _m.pi * idx / 12 - _m.pi / 2
-        nx = circle_cx + circle_r * _m.cos(ang)
+        nx = circle_cx - circle_r * _m.cos(ang)
         ny = circle_cy + circle_r * _m.sin(ang)
         node_positions[cls] = (nx, ny)
         v_val = SEM[cls][3]

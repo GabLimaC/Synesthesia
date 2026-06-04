@@ -306,7 +306,7 @@ def main():
                 is_off = (status == 128) or (status == 144 and velocity == 0)
 
                 if is_on:
-                    color, label, v, _ = get_color(note, velocity, settings["mode"])
+                    color, label, v, _ = get_color(note, velocity, settings["mode"], 50, 50)
                     semitone = (note - 60) % 12
                     # LFI_DATA is in LINEAR (frequency) order; index = chromatic semitone
                     g_class = LFI_DATA[semitone][0]

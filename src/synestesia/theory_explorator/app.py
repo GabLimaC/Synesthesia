@@ -63,10 +63,10 @@ GLOW_A      = 55
 
 # ── LFI lookup ────────────────────────────────────────────────────────────────
 V_OF    = {row[0]: row[3] for row in LFI_DATA}
-GEN_SEQ = [row[0] for row in LFI_DATA]   # [0,7,2,9,4,11,6,1,8,3,10,5]
+LINEAR_SEQ = [row[0] for row in LFI_DATA]   # linear (v-sorted): [0,7,2,9,4,11,6,1,8,3,10,5]
 
-# Generative order for interval circles (clockwise sequence)
-GENERATIVE_ORDER = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]
+# Linear (v-sorted) order for interval circles
+LINEAR_ORDER = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]
 
 # ── note frequencies (G0 = 320 Hz) ───────────────────────────────────────────
 FREQ_BASE = 320.0
@@ -403,7 +403,7 @@ class CircleLineVisualizer:
 
     def _sequence(self):
         if self.mode == 0: return list(range(12))
-        if self.mode == 1: return list(GEN_SEQ)
+        if self.mode == 1: return list(LINEAR_SEQ)
         return list(self._custom_order)
 
     def _ensure_sounds(self):
@@ -587,21 +587,29 @@ class CircleLineVisualizer:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 RELS = [
-    {"step": 1, "name": "±1", "shape_name": "12-gon",       "polygons": 1, "same_style": "Double solid"},
-    {"step": 2, "name": "±2", "shape_name": "Hexagons",     "polygons": 2, "same_style": "Single solid"},
-    {"step": 3, "name": "±3", "shape_name": "Squares",      "polygons": 3, "same_style": "Dot-dashed"},
-    {"step": 4, "name": "±4", "shape_name": "Triangles",    "polygons": 4, "same_style": "Long dashes"},
-    {"step": 5, "name": "±5", "shape_name": "Starburst",    "polygons": 1, "same_style": "Tight dots"},
+    {"step": 1, "name": "±1", "shape_name": "Starburst",    "polygons": 1, "same_style": "Double solid"},
+    {"step": 2, "name": "±2", "shape_name": "Hexagons",     "polygons": 2, "same_style": "Dot-dashed"},
+    {"step": 3, "name": "±3", "shape_name": "Squares",      "polygons": 3, "same_style": "Long dashes"},
+    {"step": 4, "name": "±4", "shape_name": "Triangles",    "polygons": 4, "same_style": "Single solid"},
+    {"step": 5, "name": "±5", "shape_name": "12-gon",       "polygons": 1, "same_style": "Tight dots"},
     {"step": 6, "name": "6",  "shape_name": "Midpoint",     "polygons": 6, "same_style": "Anchored"},
 ]
 
-LFI_COLORS = [_hsl(v_hue(V_OF[n]), 100.0, 50.0) for n in GENERATIVE_ORDER]
-LFI_LABELS = [f"G{n}" for n in GENERATIVE_ORDER]
-LFI_HUES   = [v_hue(V_OF[n]) for n in GENERATIVE_ORDER]
+# ── Line style tuning (merged view) ──
+BASE_W          = {1: 3, 2: 3, 3: 2, 4: 2, 5: 2, 6: 10}   # base pixel width per step
+DASH3_SEG       = 18  # step 2 — length of each dash+dot cycle (px)
+DASH3_DASH      = 20  # step 3 — dash length (px)
+DASH3_GAP       = 10  # step 3 — gap length (px)
+DASH5_GAP       = 5   # step 5 — dot spacing (px)
+NODE_R_MERGED   = 15   # merged view node radius (px)
+
+LFI_COLORS = [_hsl(v_hue(V_OF[n]), 100.0, 50.0) for n in LINEAR_ORDER]
+LFI_LABELS = [f"G{n}" for n in LINEAR_ORDER]
+LFI_HUES   = [v_hue(V_OF[n]) for n in LINEAR_ORDER]
 
 
 def _build_arc_path(idx_a, idx_b):
-    """Shortest clockwise arc on the generative circle from idx_a to idx_b.
+    """Shortest clockwise arc on the circle from idx_a to idx_b.
     Returns list of slot indices, inclusive of both ends."""
     delta = (idx_b - idx_a) % 12
     if delta <= 6:
@@ -611,7 +619,7 @@ def _build_arc_path(idx_a, idx_b):
 
 
 def _build_arc_path_ccw(idx_a, idx_b):
-    """Counter-clockwise arc on the generative circle from idx_a to idx_b."""
+    """Counter-clockwise arc on the circle from idx_a to idx_b."""
     delta = (idx_a - idx_b) % 12
     return [(idx_a - i) % 12 for i in range(delta + 1)]
 
@@ -706,27 +714,36 @@ def _draw_arc_gradient_dotted(surf, a, b, arc_slots, gap=5, width=2, alpha=1.0, 
         pygame.draw.circle(surf, col, (int(x), int(y)), width)
 
 
-def _draw_step6_split_line(surf, a, b, cw_arc, ccw_arc, width=4, alpha=1.0):
-    """Step 6: two parallel halves — clockwise arc + counter-clockwise arc."""
+def _draw_step6_split_line(surf, a, b, cw_arc, ccw_arc, width=4, alpha=1.0, hues=None):
+    """Step 6: single thick line — top half cw arc gradient, bottom half ccw arc gradient."""
     dx = b[0] - a[0]; dy = b[1] - a[1]
     dist = math.hypot(dx, dy)
     if dist == 0:
         return
-    nx = -dy / dist * (width * 0.4); ny = dx / dist * (width * 0.4)
-    half_w = max(1, width // 2)
+    nx = -dy / dist; ny = dx / dist
+    half_w = width / 2.0
+    n = max(2, int(dist / 2))
 
-    a1 = (a[0] + nx, a[1] + ny); b1 = (b[0] + nx, b[1] + ny)
-    _draw_arc_gradient_solid(surf, a1, b1, cw_arc, half_w, alpha)
+    for o in range(width):
+        offset = -half_w + o + 0.5
+        ox = nx * offset; oy = ny * offset
+        arc = cw_arc if o < width // 2 else ccw_arc
 
-    a2 = (a[0] - nx, a[1] - ny); b2 = (b[0] - nx, b[1] - ny)
-    _draw_arc_gradient_solid(surf, a2, b2, ccw_arc, half_w, alpha)
+        for i in range(n):
+            t_mid = (i + 0.5) / n
+            col = _col_at_hue(_arc_hue(t_mid, arc, hues), alpha)
+            x0, y0 = _chord_point(a, b, i / n)
+            x1, y1 = _chord_point(a, b, (i + 1) / n)
+            pygame.draw.line(surf, col,
+                (int(x0 + ox), int(y0 + oy)),
+                (int(x1 + ox), int(y1 + oy)), 1)
 
 
-def draw_gradient_relation_line(surf, a, b, step, a_idx, b_idx, width=2, alpha=1.0):
+def draw_gradient_relation_line(surf, a, b, step, a_idx, b_idx, width=2, alpha=1.0, hues=None):
     if step == 6:
         cw_arc = _build_arc_path(a_idx, b_idx)
         ccw_arc = _build_arc_path_ccw(a_idx, b_idx)
-        _draw_step6_split_line(surf, a, b, cw_arc, ccw_arc, width + 1, alpha)
+        _draw_step6_split_line(surf, a, b, cw_arc, ccw_arc, width + 1, alpha, hues)
         return
 
     arc = _build_arc_path(a_idx, b_idx)
@@ -737,17 +754,17 @@ def draw_gradient_relation_line(surf, a, b, step, a_idx, b_idx, width=2, alpha=1
             return
         nx = -dy / dist * 3; ny = dx / dist * 3
         _draw_arc_gradient_solid(surf,
-            (a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny), arc, width, alpha)
+            (a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny), arc, width, alpha, hues)
         _draw_arc_gradient_solid(surf,
-            (a[0] - nx, a[1] - ny), (b[0] - nx, b[1] - ny), arc, width, alpha)
+            (a[0] - nx, a[1] - ny), (b[0] - nx, b[1] - ny), arc, width, alpha, hues)
     elif step == 2:
-        _draw_arc_gradient_solid(surf, a, b, arc, width, alpha)
+        _draw_arc_gradient_dot_dashed(surf, a, b, arc, seg=DASH3_SEG, width=width, alpha=alpha, hues=hues)
     elif step == 3:
-        _draw_arc_gradient_dot_dashed(surf, a, b, arc, seg=12, width=width, alpha=alpha)
+        _draw_arc_gradient_dashes(surf, a, b, arc, dash=DASH3_DASH, gap=DASH3_GAP, width=width, alpha=alpha, hues=hues)
     elif step == 4:
-        _draw_arc_gradient_dashes(surf, a, b, arc, dash=10, gap=6, width=width, alpha=alpha)
+        _draw_arc_gradient_solid(surf, a, b, arc, width, alpha, hues)
     elif step == 5:
-        _draw_arc_gradient_dotted(surf, a, b, arc, gap=5, width=width, alpha=alpha)
+        _draw_arc_gradient_dotted(surf, a, b, arc, gap=DASH5_GAP, width=width, alpha=alpha, hues=hues)
 
 
 def _seg_points(p1, p2, n):
@@ -801,11 +818,11 @@ def draw_relation_line(surf, color, a, b, step, width=2):
     if step == 1:
         draw_double_line(surf, color, a, b, width, 3)
     elif step == 2:
-        pygame.draw.line(surf, color, a, b, width)
-    elif step == 3:
         draw_dot_dashed(surf, color, a, b, width)
+    elif step == 3:
+        draw_long_dashes(surf, color, a, b, 20, 10, width)
     elif step == 4:
-        draw_long_dashes(surf, color, a, b, 10, 6, width)
+        pygame.draw.line(surf, color, a, b, width)
     elif step == 5:
         draw_dotted_line(surf, color, a, b, 4, width)
     elif step == 6:
@@ -849,31 +866,75 @@ def _draw_legend_sample(surf, color, y, x_start, x_end, step):
 
 
 class IntervalView:
+    _MODES = ('LINEAR', 'GENERATIVE')
+
     def __init__(self, rect, fonts, color_state):
         self.rect = pygame.Rect(rect)
         self.fonts = fonts
         self.cs = color_state
+        self.mode = 0  # 0=LINEAR, 1=GENERATIVE
+        self.merge_pct = 0.42  # fraction of height for merged view
         self.selected = {1, 2, 3, 4, 5, 6}
         self._alphas = {r['step']: 1.0 for r in RELS}
         self._sel_buttons = []
+        self._mode_buttons = []
         self._build_selector()
+        self._build_mode_buttons()
 
     def resize(self, rect):
         self.rect = pygame.Rect(rect)
         self._build_selector()
+        self._build_mode_buttons()
         self._update_selector_y(self.rect.y + 8)
+
+    def _sequence(self):
+        if self.mode == 0: return list(LINEAR_SEQ)   # LINEAR
+        return list(range(12))                      # GENERATIVE
+
+    def _hues(self):
+        return [self.cs.hue_of(n) for n in self._sequence()]
+
+    def _colors(self):
+        return [self.cs.color(n) for n in self._sequence()]
+
+    def _labels(self):
+        return [f"G{n}" for n in self._sequence()]
+
+    def _geo_step(self, rel_step):
+        """Effective geometric step for path tracing.
+        LINEAR: step 1 ↔ 5 are inverted (star ↔ convex 12-gon).
+        GENERATIVE: no inversion needed."""
+        if self.mode == 0:
+            if rel_step == 1: return 5
+            if rel_step == 5: return 1
+        return rel_step
+
+    def _set_mode(self, i):
+        self.mode = i
+        for j, b in enumerate(self._mode_buttons):
+            b.active = (j == i)
+
+    def _build_mode_buttons(self):
+        bw, bh = 94, 22
+        bx = self.rect.right - bw * 2 - 14
+        by = self.rect.y + 8
+        self._mode_buttons = []
+        for i, lbl in enumerate(self._MODES):
+            b = _Btn((bx + i * (bw + 5), by, bw, bh), lbl)
+            b.active = (i == self.mode)
+            self._mode_buttons.append(b)
 
     def _build_selector(self):
         n = len(RELS)
         pad = 6
-        avail_w = self.rect.width - 20
+        mode_reserve = 210
+        avail_w = self.rect.width - 20 - mode_reserve
         self._sel_bw = (avail_w - pad * (n - 1)) // n
         self._sel_bx0 = self.rect.x + 10
         self._sel_pad = pad
         self._sel_buttons = []
         for i, rel in enumerate(RELS):
             bx = self._sel_bx0 + i * (self._sel_bw + pad)
-            # y will be updated in draw before rendering
             self._sel_buttons.append(_Btn((bx, 0, self._sel_bw, 26), rel['name']))
             self._sel_buttons[-1].active = rel['step'] in self.selected
 
@@ -886,8 +947,23 @@ class IntervalView:
             btn.active = rel['step'] in self.selected
 
     def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_UP, pygame.K_w):
+                self.merge_pct = min(0.75, self.merge_pct + 0.02)
+                return True
+            if event.key in (pygame.K_DOWN, pygame.K_s):
+                self.merge_pct = max(0.20, self.merge_pct - 0.02)
+                return True
+        if event.type == pygame.MOUSEWHEEL:
+            self.merge_pct = max(0.20, min(0.75, self.merge_pct + event.y * 0.02))
+            return True
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
+            # Check mode buttons
+            for i, btn in enumerate(self._mode_buttons):
+                if btn.hit(event.pos):
+                    self._set_mode(i)
+                    return True
             # Check selector buttons
             for btn in self._sel_buttons:
                 if btn.hit(event.pos):
@@ -904,6 +980,8 @@ class IntervalView:
             return False
         if event.type == pygame.MOUSEMOTION:
             for btn in self._sel_buttons:
+                btn.hover = btn.hit(event.pos)
+            for btn in self._mode_buttons:
                 btn.hover = btn.hit(event.pos)
         return False
 
@@ -926,6 +1004,8 @@ class IntervalView:
     def _update_selector_y(self, base_y):
         for btn in self._sel_buttons:
             btn.rect.y = base_y + 8
+        for btn in self._mode_buttons:
+            btn.rect.y = base_y + 34
 
     def _draw_selector(self, surf, base_x, base_y):
         self._update_selector_y(base_y)
@@ -934,6 +1014,8 @@ class IntervalView:
         hint = self.fonts['xs'].render("toggle to show/hide:", True, (80, 95, 120))
         surf.blit(hint, (base_x + 10, base_y + 38))
         for btn in self._sel_buttons:
+            btn.draw(surf, self.fonts['xs'])
+        for btn in self._mode_buttons:
             btn.draw(surf, self.fonts['xs'])
 
     def _draw_card(self, surf, rect, rel):
@@ -967,12 +1049,13 @@ class IntervalView:
 
         col = (120, 130, 160)
         n_poly = rel['polygons']
+        geo_s = self._geo_step(step)
         for poly_i in range(n_poly):
             path = []
             cur = poly_i
             while True:
                 path.append(cur)
-                cur = (cur + step) % 12
+                cur = (cur + geo_s) % 12
                 if cur == poly_i:
                     break
             pts = [self._slot_pos(i, cx, cy, r) for i in path]
@@ -982,9 +1065,10 @@ class IntervalView:
                 draw_relation_line(surf, col, a_pt, b_pt, step, width=2)
 
         # Nodes — no labels
+        colors = self._colors()
         for i in range(12):
             px, py = self._slot_pos(i, cx, cy, r)
-            col = LFI_COLORS[i]
+            col = colors[i]
             rad = 4
             pygame.draw.circle(surf, col, (int(px), int(py)), rad)
             pygame.draw.circle(surf, (220, 220, 220), (int(px), int(py)), rad, 1)
@@ -995,11 +1079,14 @@ class IntervalView:
         ecy = right_y + right_h // 2 - 18
         er = min(right_w, right_h) // 3 - 4
 
+        star_step = 1 if self.mode == 0 else 5
         if step == 6:
             a = (ecx - er, ecy)
             b = (ecx + er, ecy)
-            draw_relation_line(surf, (160, 170, 200), a, b, step, 2)
-        elif step == 5:
+            pygame.draw.line(surf, (160, 170, 200), (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), 2)
+            pygame.draw.circle(surf, (160, 170, 200), (int(a[0]), int(a[1])), 4)
+            pygame.draw.circle(surf, (160, 170, 200), (int(b[0]), int(b[1])), 4)
+        elif step == star_step:
             n = 12; k = 5
             verts = []
             for i in range(n):
@@ -1008,7 +1095,7 @@ class IntervalView:
             for i in range(n):
                 a = verts[i]
                 b = verts[(i + k) % n]
-                draw_relation_line(surf, (160, 170, 200), a, b, step, 1)
+                pygame.draw.line(surf, (160, 170, 200), (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), 1)
         else:
             n_vertices = 12 // math.gcd(step, 12)
             poly = []
@@ -1044,10 +1131,17 @@ class IntervalView:
 
         title = self.fonts['sm'].render("MERGED VIEW", True, (160, 175, 210))
         surf.blit(title, (x + 10, y + 6))
+        pct = self.fonts['xs'].render(
+            f"{int(self.merge_pct * 100)}%  ↑↓/wheel", True, (80, 95, 130))
+        surf.blit(pct, (x + 10 + title.get_width() + 8, y + 8))
 
         cx = x + w // 2
         cy = y + h // 2 + 4
         r = min(w, h) // 2 - 24
+
+        colors = self._colors()
+        hues   = self._hues()
+        labels = self._labels()
 
         # Draw all selected paths with LFI colour gradients
         for rel in RELS:
@@ -1056,12 +1150,13 @@ class IntervalView:
             if alpha < 0.01:
                 continue
             n_poly = rel['polygons']
+            geo_s = self._geo_step(step)
             for poly_i in range(n_poly):
                 path = []
                 cur = poly_i
                 while True:
                     path.append(cur)
-                    cur = (cur + step) % 12
+                    cur = (cur + geo_s) % 12
                     if cur == poly_i:
                         break
                 pts = [self._slot_pos(i, cx, cy, r) for i in path]
@@ -1070,20 +1165,21 @@ class IntervalView:
                     b_idx = path[(i + 1) % len(path)]
                     a_pt = pts[i]
                     b_pt = pts[(i + 1) % len(pts)]
+                    base_w = BASE_W[step]
                     draw_gradient_relation_line(surf, a_pt, b_pt, step, a_idx, b_idx,
-                                                 width=max(1, int(2 * alpha)), alpha=alpha)
+                                                 width=max(1, int(base_w * alpha)), alpha=alpha,
+                                                 hues=hues)
 
-        # Nodes with radial labels
+        # Nodes with inner labels
+        nr = NODE_R_MERGED
         for i in range(12):
             px, py = self._slot_pos(i, cx, cy, r)
-            col = LFI_COLORS[i]
-            pygame.draw.circle(surf, col, (int(px), int(py)), 6)
-            pygame.draw.circle(surf, (220, 220, 220), (int(px), int(py)), 6, 1)
-            angle = -math.pi / 2 + 2 * math.pi * i / 12
-            lx = px + math.cos(angle) * 18
-            ly = py + math.sin(angle) * 18
-            lbl = self.fonts['xs'].render(LFI_LABELS[i], True, (200, 200, 200))
-            surf.blit(lbl, (int(lx) - lbl.get_width() // 2, int(ly) - lbl.get_height() // 2))
+            col = colors[i]
+            ix, iy = int(px), int(py)
+            pygame.draw.circle(surf, col, (ix, iy), nr)
+            pygame.draw.circle(surf, (0, 0, 0), (ix, iy), nr, 1)
+            lbl = self.fonts['xs'].render(labels[i], True, (0, 0, 0))
+            surf.blit(lbl, (ix - lbl.get_width() // 2, iy - lbl.get_height() // 2))
 
     def draw(self, surf):
         pygame.draw.rect(surf, COMP_BG, self.rect)
@@ -1091,7 +1187,7 @@ class IntervalView:
 
         pad = 8
         sel_h = 56
-        merge_h = int(self.rect.height * 0.42)
+        merge_h = int(self.rect.height * self.merge_pct)
         cards_top = self.rect.y + merge_h + pad + sel_h
         cards_h = self.rect.height - merge_h - sel_h - pad * 3
 
@@ -1202,6 +1298,11 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_q):
                     running = False
+                elif active_tab == 2:
+                    comp3.handle_event(event)
+            elif event.type == pygame.MOUSEWHEEL:
+                if active_tab == 2:
+                    comp3.handle_event(event)
             elif event.type == pygame.VIDEORESIZE:
                 W, H = event.w, event.h
                 screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)

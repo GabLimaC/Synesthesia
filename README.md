@@ -1,17 +1,18 @@
 # Synesthesia
 
-Three interactive tools for MIDI visualization and composition using the
-**Liminal Flow Intonation (LFI)** color system — a frequency-derived, logarithmic
-spiral mapping of sound to light. Hue is computed directly from `log₂(frequency)`;
-no Western music theory is used.
+Four interactive tools for MIDI visualization, composition, and LFI theory
+exploration using the **Liminal Flow Intonation (LFI)** color system — a
+frequency-derived, logarithmic spiral mapping of sound to light. Hue is computed
+directly from `log₂(frequency)`; no Western music theory is used.
 
 ## Applications
 
 | App | Description |
 |-----|-------------|
-| **Composer** | Piano-roll node editor with MIDI import and playback |
-| **Composer Live** | Composer + real-time MIDI input, per-hand mute/hide, connection toggling |
-| **Visualizer** | Real-time MIDI visualizer — Flow view + Piano Roll (Tiles / Nodes) |
+| **Composer** | Piano-roll node-based composition tool with MIDI import/playback |
+| **Composer Live** | Composer + real-time MIDI input, hand mute/hide, connection toggling |
+| **MIDI Visualizer** | Real-time MIDI visualizer — Flow view + Piano Roll (Tiles / Nodes) |
+| **Theory Explorator** | LFI Generative Circle, Circle/Line Visualizer & Interval Relationship View with tone playback |
 
 ## Quick start
 
@@ -23,7 +24,7 @@ pip install pygame numpy mido
 python menu.py
 ```
 
-Then enter `1`, `2`, or `3` to open an application.
+Then enter `1`, `2`, `3`, or `4` to open an application.
 
 ## Project structure
 
@@ -39,7 +40,9 @@ synestesia/
 │       │   └── app.py
 │       ├── composer_live/        # Composer + live MIDI
 │       │   └── app.py
-│       └── visualizer/           # Real-time MIDI visualizer (synestv2)
+│       ├── midi_visualizer/      # Real-time MIDI visualizer (Flow + Piano Roll)
+│       │   └── app.py
+│       └── theory_explorator/     # LFI Generative Circle & Interval Relationship View
 │           └── app.py
 ├── tests/
 │   └── test_lfi.py               # Pure-math tests for the LFI engine
@@ -106,10 +109,21 @@ and require no display — pygame is stubbed out.
 | C | Clear palette |
 | ESC | Quit |
 
-### Visualizer
+### MIDI Visualizer
 
 | Input | Action |
 |-------|--------|
 | TAB | Toggle side menu |
 | V | Switch view (Flow / Piano Roll) |
 | ESC | Quit |
+
+### Theory Explorator
+
+| Input | Action |
+|-------|--------|
+| Click tab bar | Switch module (Generative Circle / Circle Line / Interval View) |
+| Click buttons | Toggle color/sequence modes |
+| Click node | Play tone |
+| Drag node (Custom mode) | Swap slot positions |
+| Mouse wheel / ↑↓ | Adjust merge percentage (Interval View) |
+| ESC / Q | Quit |

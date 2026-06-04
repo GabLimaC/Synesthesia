@@ -25,15 +25,15 @@ APPS = [
     },
     {
         "key": "3",
-        "name": "Visualizer",
+        "name": "MIDI Visualizer",
         "desc": "Real-time MIDI visualizer — Flow view + Piano Roll (Tiles / Nodes)",
-        "module": "synestesia.visualizer",
+        "module": "synestesia.midi_visualizer",
     },
     {
         "key": "4",
-        "name": "Visualization Page",
-        "desc": "LFI Generative Circle & interactive Circle/Line Visualizer with tone playback",
-        "module": "synestesia.visualization",
+        "name": "Theory Explorator",
+        "desc": "LFI Generative Circle, Circle/Line Visualizer & Interval Relationship View with tone playback",
+        "module": "synestesia.theory_explorator",
     },
 ]
 

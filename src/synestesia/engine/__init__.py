@@ -24,4 +24,5 @@ from .core import (
     # drawing helpers
     draw_rounded, draw_view_tabs, draw_piano_roll,
     draw_piano_roll_sub_tabs, draw_piano_roll_nodes,
+    draw_piano_roll_relations,
 )

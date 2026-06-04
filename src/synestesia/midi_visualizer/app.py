@@ -15,6 +15,7 @@ import math
 from ..engine import (
     LFI_DATA, get_color, lerp_c, midi_to_freq, v_hue, _hsl,
     draw_view_tabs, draw_piano_roll, draw_piano_roll_sub_tabs, draw_piano_roll_nodes,
+    draw_piano_roll_relations,
     PIANO_MIDI_MIN, PIANO_MIDI_MAX, PIANO_NOTE_COUNT,
     SQUARE_ROW_H, VIEW_TAB_H, SUB_TAB_H, NODE_RADIUS, MENU_W,
 )
@@ -243,6 +244,10 @@ def main():
     # Each node: { 'midi_note': int, 'cx': float, 'cy': float, 'color': tuple }
     node_trail: list = []
 
+    # Relation pair tracking for the Relations sub-view
+    # { 'left': (class, midi, color, label, v) | None, 'right': ditto | None }
+    relation_pair = None
+
     print("TAB = toggle menu  |  V = switch view  |  ESC = quit")
 
     running = True
@@ -272,7 +277,7 @@ def main():
                 # Click on piano-roll sub-tab bar
                 elif view_tab == 1 and VIEW_TAB_H <= my < VIEW_TAB_H + SUB_TAB_H and mx >= cx0:
                     rel = mx - cx0
-                    piano_roll_sub = 0 if rel < cw0 // 2 else 1
+                    piano_roll_sub = int(rel / (cw0 / 3))
                     trail_columns.clear()
                     node_trail.clear()
                 # Click on piano-roll note squares (palette pick)
@@ -303,6 +308,17 @@ def main():
                 if is_on:
                     color, label, v, _ = get_color(note, velocity, settings["mode"])
                     semitone = (note - 60) % 12
+                    # LFI_DATA is in LINEAR (frequency) order; index = chromatic semitone
+                    g_class = LFI_DATA[semitone][0]
+                    # ── relation pair tracking ──
+                    entry = (g_class, note, color, label, v)
+                    if relation_pair is None:
+                        relation_pair = {'left': entry, 'right': None}
+                    else:
+                        if relation_pair['right'] is not None:
+                            relation_pair['left'] = relation_pair['right']
+                        relation_pair['right'] = entry
+                    # ── note_states ──
                     if note in note_states:
                         note_states[note].update(
                             color=color, label=label, v=v, semitone=semitone,
@@ -472,10 +488,13 @@ def main():
                 draw_piano_roll(screen, fonts, note_states, trail_columns,
                     content_x, content_w, W, H, BG,
                     palette_pick=settings.get("palette_pick"))
-            else:
+            elif piano_roll_sub == 1:
                 draw_piano_roll_nodes(screen, fonts, note_states, node_trail,
                     content_x, content_w, W, H, BG,
                     palette_pick=settings.get("palette_pick"))
+            else:
+                draw_piano_roll_relations(screen, fonts, note_states, relation_pair,
+                    content_x, content_w, W, H, BG)
             # Sub-tab bar (drawn on top of trail area)
             draw_piano_roll_sub_tabs(screen, fonts, content_x, content_w, piano_roll_sub)
 

@@ -2,15 +2,16 @@
 
 ## Project overview
 
-Three interactive tools for MIDI visualization and composition, all using the
+Four interactive tools for MIDI visualization, composition, and LFI theory
+exploration, all using the
 **Liminal Flow Intonation (LFI)** color system — not Western 12-tone theory.
 
 ### Applications (canonical source in `src/synestesia/`)
 
 - **`src/synestesia/composer/app.py`** — piano-roll node-based composer with MIDI import/playback
 - **`src/synestesia/composer_live/app.py`** — composer + real-time MIDI input, hand mute/hide, connection toggling
-- **`src/synestesia/visualizer/app.py`** — MIDI visualizer (Flow view + Piano Roll Tiles/Nodes)
-- **`src/synestesia/visualization/app.py`** — LFI Generative Circle, Circle/Line Visualizer, and Interval Relationship View with tone playback
+- **`src/synestesia/midi_visualizer/app.py`** — MIDI visualizer (Flow view + Piano Roll Tiles/Nodes)
+- **`src/synestesia/theory_explorator/app.py`** — LFI Generative Circle, Circle/Line Visualizer, and Interval Relationship View with tone playback
 
 ### Project structure
 
@@ -30,10 +31,10 @@ synestesia/
 │       ├── composer_live/
 │       │   ├── app.py
 │       │   └── __init__.py        # exposes run()
-│       ├── visualizer/
+│       ├── midi_visualizer/
 │       │   ├── app.py
 │       │   └── __init__.py        # exposes run()
-│       └── visualization/
+│       └── theory_explorator/
 │           ├── app.py
 │           └── __init__.py        # exposes run()
 ├── tests/
@@ -65,17 +66,47 @@ The system has 12 note classes named G0 through G11. These are **not** Western
 note names (C, D, E, …). They are labels for positions in a self-contained
 generative sequence.
 
-```
-LFI_DATA layout: (semitone_index, name, frequency, v_value)
-  0 = G0    4 = G4     8 = G8
-  1 = G1    5 = G5     9 = G9
-  2 = G2    6 = G6    10 = G10
-  3 = G3    7 = G7    11 = G11
+`LFI_DATA` is a list of 12 tuples `(chromatic_semitone, name, base_freq, v_value)`
+**ordered by ascending frequency** (the LINEAR sequence), not by chromatic semitone:
+
+| Index | Entry | v_value | hue    | Description |
+|-------|-------|--------:|-------:|-------------|
+| 0     | (0, "G0", ...)  | 0.000000 | 240° Blue | frequency anchor |
+| 1     | (7, "G7", ...)  | 0.094738 | 274° Violet | next in frequency |
+| 2     | (2, "G2", ...)  | 0.169925 | 301° Magenta | |
+| 3     | (9, "G9", ...)  | 0.264663 | 335° Rose | |
+| 4     | (4, "G4", ...)  | 0.339850 | 2° Red | |
+| 5     | (11, "G11", ...)| 0.434588 | 36° Orange | |
+| 6     | (6, "G6", ...)  | 0.509775 | 64° Yellow | structural midpoint |
+| 7     | (1, "G1", ...)  | 0.584963 | 91° Chartreuse | |
+| 8     | (8, "G8", ...)  | 0.679700 | 125° Green | |
+| 9     | (3, "G3", ...)  | 0.754888 | 152° Spring | |
+| 10    | (10, "G10", ...)| 0.849625 | 186° Cyan | |
+| 11    | (5, "G5", ...)  | 0.924813 | 213° Azure | |
+
+**Do NOT index LFI_DATA by chromatic semitone.** Use `SEM` (a dict keyed by
+chromatic semitone) for lookup by semitone. Index into `LFI_DATA` only by
+LINEAR position (0 = G0, 1 = G7, 2 = G2, …).
+
+The LINEAR sequence (frequency-ascending order):
+`G0 → G7 → G2 → G9 → G4 → G11 → G6 → G1 → G8 → G3 → G10 → G5`
+
+### Chromatic to LFI G-class mapping
+
+The 12 piano-key chromatic positions map to LFI G-classes via
+`_LINEAR_CHROMATIC_MAP` in `engine/core.py`:
+
+```python
+_LINEAR_CHROMATIC_MAP = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]
 ```
 
-  - `name(midi)` returns e.g. `"G43"` (G4 in octave 3), `"G70"` (G7 in octave 0)
-  - The `v` value (4th tuple element) determines the hue via `v_hue(v)`
-  - Octave lightness is modulated by octave height in `note_color()`
+So the key immediately to the right of G0 (chromatic semitone 1) maps to **G7**
+(the LINEAR successor of G0), not G1. All MIDI→LFI color/label functions
+(`get_color_relative`, `note_color`, `name`) use this mapping:
+
+```python
+g_class = _LINEAR_CHROMATIC_MAP[(midi_note - 60) % 12]
+```
 
 ### The generative system
 
@@ -91,7 +122,10 @@ This is a **frequency-agnostic** mathematical system; it does not depend on any
 external tuning standard.
 
 The generative sequence, when laid out as frequency ratios inside one octave,
-produces the **Linear sequence**:
+produces the **Generative sequence**:
+`G0 → G1 → G2 → G3 → G4 → G5 → G6 → G7 → G8 → G9 → G10 → G11`
+
+And when normalized to the range of one octave and ordered numerically, it produces the LINEAR SEQUENCE:
 
 `G0 → G7 → G2 → G9 → G4 → G11 → G6 → G1 → G8 → G3 → G10 → G5`
 
@@ -200,8 +234,23 @@ reference frame.
 ### MIDI compatibility convention
 
 For compatibility with real MIDI instruments, the project accepts the mapping
-**C1 = G01** (Western MIDI note 12 maps to G0 in octave 1). The implementation
-allows switching between this practical convention and the internal LFI numbering.
+**C1 = G01** (Western MIDI note 12 maps to G0 in octave 1).
+
+All MIDI→LFI mapping functions use `_LINEAR_CHROMATIC_MAP` to convert the
+chromatic keyboard position to an LFI G-class in LINEAR (frequency) order.
+This means the 12 chromatic steps per octave map to LFI classes in
+frequency-ascending order, NOT in chromatic-label order.
+
+```python
+# Reference MIDI note = 60 maps to G0 (blue):
+chromatic_semitone = (midi_note - 60) % 12
+g_class = _LINEAR_CHROMATIC_MAP[chromatic_semitone]  # LINEAR G-class
+
+# Example: key right of G0 (C#4, MIDI 61):
+#   chromatic_semitone = 1 → _LINEAR_CHROMATIC_MAP[1] = 7 → G7 (violet)
+# Example: the key 7 chromatic steps above G0 (G4, MIDI 67):
+#   chromatic_semitone = 7 → _LINEAR_CHROMATIC_MAP[7] = 1 → G1 (chartreuse)
+```
 
 ### Forbidden terms
 
@@ -258,10 +307,11 @@ Connecting lines in `draw_grid` must only connect within each hand group.
 Never draw a line from a left-hand node to a right-hand node.
 
 ### Palette picker
-- `comp.palette_pick` (composer) and `settings["palette_pick"]` (visualizer)
-  are **`set()`** of note-class indices (0–11). When empty the picker is inactive.
+- `comp.palette_pick` (composer) stores **LINEAR positions** (0=G0, 1=G7, …).
+  `settings["palette_pick"]` (midi_visualizer) stores **chromatic semitones** (0-11).
+  When either set is empty, the picker is inactive.
 - Keyboard shortcuts: `0`–`9` = G0–G9, `-` = G10, `=` = G11, `C` = clear.
-- SHIFT+click a node to pick its note class.
+- SHIFT+click a node/piano-roll square to pick its note class.
 - When active, matching notes get a brightened border and their column gets colored.
 - A floating box in the top-right lists all matching notes.
 - Clicking the box clears the selection.
@@ -304,7 +354,7 @@ Never leave tkinter roots alive during the pygame loop.
 - Live notes overlay: notes currently held on a MIDI controller get a brighter
   border and light up their column in the grid.
 
-### visualizer/app.py
+### midi_visualizer/app.py
 - MIDI input-driven (keyboard controller expected)
 - Side menu with palette pick, mode toggle (Relative/Absolute), echo/trail sliders
 - Dual view: Flow view + Piano Roll (Tiles/Nodes sub-views)
@@ -312,8 +362,8 @@ Never leave tkinter roots alive during the pygame loop.
 - TAB toggles side menu, V switches view
 - Click piano-roll note squares to palette-pick their note class
 
-### visualization/app.py
-- Self-contained visualization page (no MIDI input required). Three modules:
+### theory_explorator/app.py
+- Self-contained LFI theory exploration page (no MIDI input required). Three modules:
   1. **Generative Circle** — 12 nodes in equal angular slots (G0–G11).
      STANDARD mode uses canonical LFI hues; CUSTOM mode lets the user pick
      a G0 color via tkinter colorchooser and derives the rest via the LFI

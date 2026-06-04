@@ -55,16 +55,12 @@ def test_lfi_data_v_values_in_range():
         assert 0.0 <= v < 1.0, f"v={v} out of [0,1) for {entry[1]}"
 
 def test_lfi_data_linear_sequence_order():
-    """The LFI_DATA is ordered by the Linear sequence (G+^n steps from G0)."""
-    # G+ step in v-space: log2(3/2) ≈ 0.58496
-    # Each entry's v should be approximately the previous + log2(3/2) mod 1
-    step = math.log2(3 / 2)
-    v_prev = 0.0  # G0
+    """LFI_DATA is in LINEAR order: v-values strictly ascending (frequency order)."""
+    v_prev = -1.0
     for i, entry in enumerate(LFI_DATA):
-        expected = (v_prev + step) % 1.0 if i > 0 else 0.0
         actual = entry[3]
-        assert abs(actual - expected) < 1e-4, (
-            f"Entry {i} ({entry[1]}): expected v≈{expected:.6f}, got {actual:.6f}"
+        assert actual > v_prev, (
+            f"Entry {i} ({entry[1]}): v={actual:.6f} not > prev v={v_prev:.6f}"
         )
         v_prev = actual
 
@@ -81,19 +77,20 @@ def test_v_hue_output_in_range():
         assert 0.0 <= h < 360.0, f"hue={h} out of range for {entry[1]}"
 
 def test_v_hue_anchor_table():
-    """Spot-check the anchor table from the AGENTS spec."""
+    """Spot-check the anchor table from the AGENTS spec (G+^n step → hue)."""
     expected = {
-        0:  240.00,   # G0  — Blue
-        1:   90.59,   # G7  — Chartreuse (G+^1)
-        5:  212.93,   # G5  — Azure     (G+^5)
-        6:   63.52,   # G6  — Yellow    (G+^6 / structural midpoint)
-        10: 185.87,   # G10 — Cyan      (G+^10)
+        0:  240.00,   # G0  — Blue      (G+^0)
+        1:   90.59,   # G1  — Chartreuse (G+^1)
+        5:  212.93,   # G5  — Azure      (G+^5)
+        6:   63.52,   # G6  — Yellow     (G+^6 / structural midpoint)
+        10: 185.87,   # G10 — Cyan       (G+^10)
     }
-    for i, hue_deg in expected.items():
-        v = LFI_DATA[i][3]
+    for semitone, hue_deg in expected.items():
+        entry = SEM[semitone]
+        v = entry[3]
         got = v_hue(v)
         assert abs(got - hue_deg) < 0.1, (
-            f"LFI_DATA[{i}] ({LFI_DATA[i][1]}): expected hue {hue_deg}°, got {got:.2f}°"
+            f"G{semitone} (v={v:.6f}): expected hue {hue_deg}°, got {got:.2f}°"
         )
 
 

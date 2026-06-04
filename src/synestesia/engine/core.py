@@ -37,7 +37,11 @@ LFI_DATA = [
     (5, "G5", 75.9375, 0.924813),
 ]
 
-SEM = {i: LFI_DATA[i] for i in range(12)}
+SEM = {LFI_DATA[i][0]: LFI_DATA[i] for i in range(12)}
+
+# Chromatic keyboard position → LFI G-class in LINEAR (frequency) order.
+# E.g., the key immediately right of G0 (chromatic semitone 1) maps to G7.
+_LINEAR_CHROMATIC_MAP = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]
 
 # ── HSL → RGB ───────────────────────────────
 def _hsl(h_deg, s_pct, l_pct):
@@ -62,7 +66,8 @@ def v_hue(v):
 
 def note_color(midi, min_l=20.0, max_l=80.0):
     s = (midi - 60) % 12
-    v = SEM[s][3]
+    g_class = _LINEAR_CHROMATIC_MAP[s]
+    v = SEM[g_class][3]
     oh = max(0, min(TOTAL_OCTAVES, ((midi - 60) // 12) + 4))
     hue = v_hue(v)
     lt = min_l + (max_l - min_l) * (oh / TOTAL_OCTAVES)
@@ -81,7 +86,8 @@ def velocity_to_saturation(velocity, sat_min=55.0, sat_max=100.0):
 
 def get_color_relative(midi_note, velocity=100, min_l=20.0, max_l=80.0):
     semitone = (midi_note - 60) % 12
-    entry = SEM[semitone]
+    g_class = _LINEAR_CHROMATIC_MAP[semitone]  # chromatic pos → LFI class
+    entry = SEM[g_class]
     v = entry[3]
     octave_height = ((midi_note - 60) // 12) + 4.0
     octave_height = max(0.0, min(TOTAL_OCTAVES, octave_height))
@@ -117,8 +123,9 @@ def m2f(m):
 
 def name(m):
     sem = m % 12
+    g_class = _LINEAR_CHROMATIC_MAP[sem]
     octv = m // 12 - 1
-    lfi = LFI_DATA[sem][1]
+    lfi = SEM[g_class][1]
     return f"{lfi}{octv}"
 
 def black(m):
@@ -366,7 +373,7 @@ def draw_piano_roll(surface, fonts, note_states, trail_columns,
 def draw_piano_roll_sub_tabs(surface, fonts, content_x, content_w, piano_roll_sub):
     """Draw a small sub-tab bar just below the main view tabs when in Piano Roll."""
     y0 = VIEW_TAB_H
-    labels = ["TILES", "NODES"]
+    labels = ["TILES", "NODES", "RELATIONS"]
     tw = content_w // len(labels)
     for i, label in enumerate(labels):
         tx = content_x + i * tw
@@ -379,6 +386,444 @@ def draw_piano_roll_sub_tabs(surface, fonts, content_x, content_w, piano_roll_su
         lbl = fonts['xs'].render(label, True, fg)
         surface.blit(lbl, (tx + tw // 2 - lbl.get_width() // 2,
                     y0 + SUB_TAB_H // 2 - lbl.get_height() // 2))
+
+
+# ── relations view ──────────────────────────
+# LINEAR sequence (frequency / chromatic order): position→G-class
+# This is the same order as the keyboard: G0 G7 G2 G9 G4 G11 G6 G1 G8 G3 G10 G5
+_SLOT_TO_G_CLASS = _LINEAR_CHROMATIC_MAP
+# G-note-class → linear-position index
+_G_TO_SLOT = {g: li for li, g in enumerate(_SLOT_TO_G_CLASS)}
+
+_LINEAR_SEQ = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]  # same: frequency-ordered (circle view)
+_CLASS_TO_LINEAR_POS = {cls: idx for idx, cls in enumerate(_LINEAR_SEQ)}
+
+_REL_SLOTS = 25
+_REL_SLOT_LABEL_H = 16
+_REL_SLOT_RECT_H = 64
+_REL_SLOT_H = _REL_SLOT_LABEL_H + _REL_SLOT_RECT_H
+_REL_HIGHLIGHT_GAP = 3
+
+_STEP_NAMES = {1: "±1 Starburst", 2: "±2 Hexagons", 3: "±3 Squares",
+               4: "±4 Triangles", 5: "±5 12-gon", 6: "6 Midpoint"}
+_STEP_STYLES = {1: 'double', 2: 'dotdash', 3: 'longdash',
+                4: 'solid', 5: 'dotted', 6: 'anchored'}
+_STEP_COLORS = {1: (0, 217, 255), 2: (255, 128, 255), 3: (255, 230, 0),
+                4: (0, 230, 60), 5: (255, 150, 0), 6: (255, 50, 60)}
+
+
+def _lfi_lerp(h0, h1, t):
+    """Interpolate hue via shortest arc on the hue circle."""
+    d = h1 - h0
+    if abs(d) > 180.0:
+        if d > 0: h0 += 360.0
+        else: h1 += 360.0
+    return (h0 + (h1 - h0) * t) % 360.0
+
+
+def _arc_hue_pair(t, class_a, class_b):
+    """Get hue at fractional t along shortest hue arc between two note classes."""
+    v_a = SEM[class_a][3]
+    v_b = SEM[class_b][3]
+    ha, hb = v_hue(v_a), v_hue(v_b)
+    return _lfi_lerp(ha, hb, t)
+
+
+def _compute_linear_step(class_a, class_b):
+    """Return (step, direction, pos_indices) for two note classes in LINEAR order.
+    step = 1..6, direction = 'cw'|'ccw', pos_indices = list of position indices along arc."""
+    pa = _CLASS_TO_LINEAR_POS[class_a]
+    pb = _CLASS_TO_LINEAR_POS[class_b]
+    cw_step = (pb - pa) % 12
+    ccw_step = (pa - pb) % 12
+    if cw_step <= ccw_step:
+        step = cw_step
+        direction = 'cw'
+        indices = [(pa + k) % 12 for k in range(cw_step + 1)]
+    else:
+        step = ccw_step
+        direction = 'ccw'
+        indices = [(pa - k) % 12 for k in range(ccw_step + 1)]
+    return step, direction, indices
+
+
+def _draw_arrow_tip(surf, color, tip, angle, size=10):
+    """Draw arrowhead at tip pointing in direction angle (radians)."""
+    pts = [
+        tip,
+        (tip[0] - size * math.cos(angle - math.pi / 7),
+         tip[1] - size * math.sin(angle - math.pi / 7)),
+        (tip[0] - size * math.cos(angle + math.pi / 7),
+         tip[1] - size * math.sin(angle + math.pi / 7)),
+    ]
+    pygame.draw.polygon(surf, color, [(int(p[0]), int(p[1])) for p in pts])
+
+
+def _draw_style_line(surf, x0, y0, x1, y1, color, style, width, step):
+    """Draw a line with the given style between two points."""
+    import math as _m
+    dx, dy = x1 - x0, y1 - y0
+    length = _m.hypot(dx, dy)
+    if length < 1:
+        return
+    ux, uy = dx / length, dy / length
+    nx, ny = -uy, ux
+
+    if style == 'double':
+        offset = max(1, width)
+        for sign in (-1, 1):
+            ox, oy = x0 + sign * offset * nx, y0 + sign * offset * ny
+            ex, ey = x1 + sign * offset * nx, y1 + sign * offset * ny
+            pygame.draw.line(surf, color, (int(ox), int(oy)), (int(ex), int(ey)), max(1, width - 1))
+    elif style == 'dotdash':
+        seg = 8; gap = 6; dot = 3; dgap = 4
+        cycle = seg + gap + dot + dgap
+        pos = 0
+        while pos < length:
+            seg_end = min(pos + seg, length)
+            sx = x0 + pos * ux; sy = y0 + pos * uy
+            ex = x0 + seg_end * ux; ey = y0 + seg_end * uy
+            pygame.draw.line(surf, color, (int(sx), int(sy)), (int(ex), int(ey)), width)
+            pos += seg + gap
+            dot_pos = min(pos + dot, length)
+            if dot_pos > pos:
+                dx_ = x0 + pos * ux; dy_ = y0 + pos * uy
+                ex_ = x0 + dot_pos * ux; ey_ = y0 + dot_pos * uy
+                pygame.draw.line(surf, color, (int(dx_), int(dy_)), (int(ex_), int(ey_)), width)
+            pos += dot + dgap
+    elif style == 'longdash':
+        dash = 14; gap = 8
+        cycle = dash + gap
+        pos = 0
+        while pos < length:
+            end = min(pos + dash, length)
+            sx = x0 + pos * ux; sy = y0 + pos * uy
+            ex = x0 + end * ux; ey = y0 + end * uy
+            pygame.draw.line(surf, color, (int(sx), int(sy)), (int(ex), int(ey)), max(1, width - 1))
+            pos += cycle
+    elif style == 'dotted':
+        spacing = 5
+        pos = 0
+        while pos < length:
+            px = x0 + pos * ux; py = y0 + pos * uy
+            pygame.draw.circle(surf, color, (int(px), int(py)), max(1, width - 1))
+            pos += spacing
+    elif style == 'anchored':
+        half_w = max(2, width // 2)
+        for sign in (-1, 1):
+            ox, oy = x0 + sign * half_w * nx, y0 + sign * half_w * ny
+            ex, ey = x1 + sign * half_w * nx, y1 + sign * half_w * ny
+            pygame.draw.line(surf, color, (int(ox), int(oy)), (int(ex), int(ey)), max(2, half_w))
+    else:  # 'solid'
+        pygame.draw.line(surf, color, (int(x0), int(y0)), (int(x1), int(y1)), width)
+
+
+def _build_relations_slots():
+    """Return list of (g_class, is_central) for each of the 25 display slots.
+    Uses the LINEAR (frequency) sequence, centered on G0."""
+    slots = []
+    for li in range(6):
+        slots.append((_SLOT_TO_G_CLASS[li], False))
+    for li in [6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6]:
+        slots.append((_SLOT_TO_G_CLASS[li], True))
+    for li in [7, 8, 9, 10, 11, 0]:
+        slots.append((_SLOT_TO_G_CLASS[li], False))
+    return slots
+
+
+def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
+                              content_x, content_w, W, H, bg):
+    """Relations view: circle (linear order) + big box (pair visualizer) + bottom slots."""
+    import math as _m
+    area_top = VIEW_TAB_H + SUB_TAB_H
+    highlight_h = _REL_SLOT_RECT_H
+    highlight_y = H - _REL_SLOT_H - _REL_HIGHLIGHT_GAP - highlight_h
+    slot_y = H - _REL_SLOT_H
+    free_h = highlight_y - area_top
+    margin = 12
+
+    # ── compute active note-class colors (only held, no echo tails) ──
+    active_classes = {}
+    for midi_note, ns in note_states.items():
+        if ns.get('held'):
+            semi = (midi_note - 60) % 12
+            g_class = _LINEAR_CHROMATIC_MAP[semi]  # chromatic→LINEAR G-class
+            if g_class not in active_classes:
+                active_classes[g_class] = ns['color']
+
+    # ── layout split: circle (left ~35%) | big box (right ~65%) ──
+    circle_diam = min(free_h - 2 * margin, int(content_w * 0.35))
+    circle_x = content_x + margin
+    circle_y = area_top + (free_h - circle_diam) // 2
+    circle_cx = circle_x + circle_diam // 2
+    circle_cy = circle_y + circle_diam // 2
+    circle_r = circle_diam // 2 - 22
+
+    box_x = circle_x + circle_diam + 14
+    box_w = content_x + content_w - box_x - margin
+    box_h = min(free_h - 2 * margin, 260)
+    box_y = area_top + (free_h - box_h) // 2
+
+    # ═══════════════════════════════════════════
+    # CIRCLE VIEW — linear order with arrows
+    # ═══════════════════════════════════════════
+    # background
+    circ_surf = pygame.Surface((circle_diam, circle_diam), pygame.SRCALPHA)
+    circ_surf.fill((12, 12, 18, 220))
+    # border
+    pygame.draw.rect(circ_surf, (50, 50, 60), (0, 0, circle_diam, circle_diam), 1, border_radius=8)
+    surface.blit(circ_surf, (circle_x, circle_y))
+
+    title_line = fonts['xs'].render("LINEAR ORDER", True, (140, 140, 150))
+    surface.blit(title_line, (circle_cx - title_line.get_width() // 2, circle_y - 16))
+
+    # 12 nodes at equal angles
+    node_radius = min(8, max(4, circle_r // 8))
+    node_positions = {}
+    for idx, cls in enumerate(_LINEAR_SEQ):
+        ang = 2 * _m.pi * idx / 12 - _m.pi / 2
+        nx = circle_cx + circle_r * _m.cos(ang)
+        ny = circle_cy + circle_r * _m.sin(ang)
+        node_positions[cls] = (nx, ny)
+        v_val = SEM[cls][3]
+        hue = v_hue(v_val)
+        node_color = _hsl(hue, 100, 50)
+        # highlight if this class is currently sounding
+        if cls in active_classes:
+            is_pair_note = False
+            if relation_pair:
+                left_entry = relation_pair.get('left')
+                right_entry = relation_pair.get('right')
+                if left_entry and left_entry[0] == cls:
+                    is_pair_note = True
+                if right_entry and right_entry[0] == cls:
+                    is_pair_note = True
+            if is_pair_note:
+                # bright ring for the pair notes
+                pygame.draw.circle(surface, (255, 255, 255), (int(nx), int(ny)), node_radius + 4, 2)
+            pygame.draw.circle(surface, node_color, (int(nx), int(ny)), node_radius)
+            pygame.draw.circle(surface, (200, 200, 200), (int(nx), int(ny)), node_radius, 1)
+        else:
+            dim = tuple(int(c * 0.3) for c in node_color)
+            pygame.draw.circle(surface, dim, (int(nx), int(ny)), node_radius)
+        # label
+        if circle_r > 60:
+            lbl = fonts['xs'].render(f"G{cls}", True, (120, 120, 120))
+            lx = int(nx - lbl.get_width() // 2)
+            ly = int(ny + node_radius + 4)
+            surface.blit(lbl, (lx, ly))
+
+    # arrow from first to second if pair exists
+    if relation_pair and relation_pair.get('left') and relation_pair.get('right'):
+        left_cls = relation_pair['left'][0]
+        right_cls = relation_pair['right'][0]
+        if left_cls != right_cls:
+            step, direction, pos_indices = _compute_linear_step(left_cls, right_cls)
+            style = _STEP_STYLES.get(step, 'solid')
+            step_color = _STEP_COLORS.get(step, (200, 200, 200))
+
+            # draw straight gradient chord from source to destination
+            segments = max(12, step * 4)
+            sx, sy = node_positions[left_cls]
+            ex, ey = node_positions[right_cls]
+            px_prev, py_prev = sx, sy
+            for s_idx in range(1, segments + 1):
+                t = s_idx / segments
+                px_curr = sx + (ex - sx) * t
+                py_curr = sy + (ey - sy) * t
+                h = _arc_hue_pair(t, left_cls, right_cls)
+                seg_color = _hsl(h, 100, 55)
+                _draw_style_line(surface, px_prev, py_prev, px_curr, py_curr,
+                               seg_color, style, max(2, 5 - step // 2), step)
+                px_prev, py_prev = px_curr, py_curr
+
+            # arrow tip at destination
+            ax, ay = node_positions[right_cls]
+            bx, by = node_positions[left_cls]
+            ang = _m.atan2(ay - by, ax - bx)
+            tip_x = ax - node_radius * _m.cos(ang) * 1.3
+            tip_y = ay - node_radius * _m.sin(ang) * 1.3
+            _draw_arrow_tip(surface, step_color, (tip_x, tip_y), ang, size=8)
+
+    # ═══════════════════════════════════════════
+    # BIG BOX — pair visualizer
+    # ═══════════════════════════════════════════
+    box_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+    box_surf.fill((16, 16, 22, 230))
+    pygame.draw.rect(box_surf, (50, 50, 60), (0, 0, box_w, box_h), 1, border_radius=8)
+    surface.blit(box_surf, (box_x, box_y))
+
+    title_r = fonts['xs'].render("NOTE RELATION", True, (140, 140, 150))
+    surface.blit(title_r, (box_x + box_w // 2 - title_r.get_width() // 2, box_y - 16))
+
+    card_w = (box_w - 60) // 2
+    card_h = min(130, box_h - 100)
+    card_y = box_y + 14
+
+    left_entry = relation_pair['left'] if relation_pair else None
+    right_entry = relation_pair['right'] if relation_pair else None
+
+    # ── left card ──
+    l_cx = box_x + 15
+    if left_entry:
+        l_cls, l_midi, l_color, l_label, l_v = left_entry
+        l_freq = midi_to_freq(l_midi)
+        _draw_note_card(surface, fonts, l_cx, card_y, card_w, card_h,
+                       l_cls, l_label, l_color, l_freq)
+    else:
+        _draw_empty_card(surface, fonts, l_cx, card_y, card_w, card_h, "play a note...")
+
+    # ── right card ──
+    r_cx = box_x + box_w - 15 - card_w
+    if right_entry:
+        r_cls, r_midi, r_color, r_label, r_v = right_entry
+        r_freq = midi_to_freq(r_midi)
+        _draw_note_card(surface, fonts, r_cx, card_y, card_w, card_h,
+                       r_cls, r_label, r_color, r_freq)
+    else:
+        _draw_empty_card(surface, fonts, r_cx, card_y, card_w, card_h, "play next note")
+
+    # ── connecting line between cards ──
+    linfo_y = card_y + card_h + 10
+    if left_entry and right_entry:
+        l_cls, l_midi, l_color, l_label, l_v = left_entry
+        r_cls, r_midi, r_color, r_label, r_v = right_entry
+        l_oct = l_midi // 12 - 1
+        r_oct = r_midi // 12 - 1
+
+        l_center_x = l_cx + card_w // 2
+        r_center_x = r_cx + card_w // 2
+        conn_y = card_y + card_h // 2
+        l_edge_x = l_cx + card_w - 4
+        r_edge_x = r_cx + 4
+
+        if l_cls != r_cls:
+            step, direction, _ = _compute_linear_step(l_cls, r_cls)
+        else:
+            step, direction = 0, 'same'
+        style = _STEP_STYLES.get(step, 'solid')
+        style_color = _STEP_COLORS.get(step, (180, 180, 180))
+
+        # gradient connection from left to right
+        seg_count = max(10, (r_edge_x - l_edge_x) // 3)
+        px_prev = l_edge_x
+        for s in range(1, seg_count + 1):
+            t = s / seg_count
+            px = l_edge_x + (r_edge_x - l_edge_x) * t
+            h = _arc_hue_pair(t, l_cls, r_cls)
+            seg_color = _hsl(h, 100, 55)
+            _draw_style_line(surface, px_prev, conn_y, px, conn_y,
+                           seg_color, style, max(2, 5 - step // 2), step)
+            px_prev = px
+
+        # ── relation info line ──
+        if step > 0:
+            step_name = _STEP_NAMES.get(step, f"±{step}")
+            octave_diff = r_oct - l_oct
+            if octave_diff > 0: oct_str = f"+{octave_diff}"
+            elif octave_diff < 0: oct_str = f"{octave_diff}"
+            else: oct_str = "0"
+
+            if direction == 'cw': dir_str = "→ CW"
+            elif direction == 'ccw': dir_str = "← CCW"
+            else: dir_str = ""
+
+            info_str = f"{step_name}  {dir_str}  {oct_str} oct"
+            info = fonts['xs'].render(info_str, True, style_color)
+            info_sx = l_edge_x + (r_edge_x - l_edge_x - info.get_width()) // 2
+            surface.blit(info, (int(info_sx), linfo_y + 4))
+
+            # direction arrow icon
+            dir_lbl = fonts['xs'].render("▲" if octave_diff > 0 else ("▼" if octave_diff < 0 else "◆"), True, style_color)
+            surface.blit(dir_lbl, (l_edge_x + (r_edge_x - l_edge_x) // 2 + info.get_width() // 2 + 6, linfo_y + 4))
+
+    else:
+        idle = fonts['xs'].render("play two notes to see relationship", True, (60, 60, 60))
+        surface.blit(idle, (box_x + (box_w - idle.get_width()) // 2, linfo_y))
+
+    # ═══════════════════════════════════════════
+    # BOTTOM SLOTS — highlight + linear sequence row
+    # ═══════════════════════════════════════════
+    slot_w = content_w / _REL_SLOTS
+
+    slots = _build_relations_slots()
+
+    # highlight rectangles
+    for i, (g_class, _) in enumerate(slots):
+        if g_class not in active_classes:
+            continue
+        color = active_classes[g_class]
+        hx = int(content_x + i * slot_w + 1)
+        hw = max(1, int(slot_w) - 2)
+        pygame.draw.rect(surface, color, (hx, highlight_y, hw, highlight_h))
+        pygame.draw.rect(surface, (255, 255, 255), (hx, highlight_y, hw, highlight_h), 1)
+
+    pygame.draw.line(surface, (45, 45, 45), (content_x, slot_y - _REL_HIGHLIGHT_GAP),
+                     (content_x + content_w, slot_y - _REL_HIGHLIGHT_GAP), 1)
+    pygame.draw.rect(surface, (18, 18, 18), (content_x, slot_y, content_w, _REL_SLOT_H))
+    pygame.draw.line(surface, (45, 45, 45), (content_x, slot_y),
+                     (content_x + content_w, slot_y), 1)
+
+    for i, (g_class, is_central) in enumerate(slots):
+        sx = int(content_x + i * slot_w + 1)
+        sw = max(1, int(slot_w) - 2)
+        sy = slot_y + _REL_SLOT_LABEL_H
+        sh = _REL_SLOT_RECT_H
+        is_active = g_class in active_classes
+        if is_central:
+            if is_active:
+                color = active_classes[g_class]
+                pygame.draw.rect(surface, color, (sx, sy, sw, sh))
+                pygame.draw.rect(surface, (255, 255, 255), (sx, sy, sw, sh), 1)
+            else:
+                pygame.draw.rect(surface, (28, 28, 28), (sx, sy, sw, sh))
+                pygame.draw.rect(surface, (55, 55, 55), (sx, sy, sw, sh), 1)
+        else:
+            if is_active:
+                color = active_classes[g_class]
+                grey = int(round((color[0] + 40) * 0.33))
+                grey_c = (max(0, min(255, grey)), max(0, min(255, int(grey * 0.9))),
+                          max(0, min(255, int(grey * 0.8))))
+                pygame.draw.rect(surface, grey_c, (sx, sy, sw, sh))
+                pygame.draw.rect(surface, (140, 140, 140), (sx, sy, sw, sh), 1)
+            else:
+                pygame.draw.rect(surface, (20, 20, 20), (sx, sy, sw, sh))
+                pygame.draw.rect(surface, (32, 32, 32), (sx, sy, sw, sh), 1)
+        label_text = f"G{g_class}"
+        lbl = fonts['xs'].render(label_text, True, (160, 160, 160) if is_central else (60, 60, 60))
+        lbl_x = sx + sw // 2 - lbl.get_width() // 2
+        lbl_y = slot_y + (_REL_SLOT_LABEL_H - lbl.get_height()) // 2
+        surface.blit(lbl, (lbl_x, lbl_y))
+
+
+def _draw_note_card(surface, fonts, cx, cy, w, h, note_class, label, color, freq):
+    """Draw a single note card at (cx, cy) with size w×h."""
+    r = 6
+    pygame.draw.rect(surface, (22, 22, 32), (cx, cy, w, h), border_radius=r)
+    pygame.draw.rect(surface, (60, 60, 70), (cx, cy, w, h), 1, border_radius=r)
+    # color swatch
+    swatch_s = min(36, w - 16)
+    sx = cx + (w - swatch_s) // 2
+    sy = cy + 10
+    pygame.draw.rect(surface, color, (sx, sy, swatch_s, swatch_s), border_radius=4)
+    pygame.draw.rect(surface, (200, 200, 200), (sx, sy, swatch_s, swatch_s), 1, border_radius=4)
+    # label
+    txt_y = sy + swatch_s + 6
+    cls_lbl = fonts['xs'].render(f"G{note_class}", True, (220, 220, 220))
+    surface.blit(cls_lbl, (cx + (w - cls_lbl.get_width()) // 2, txt_y))
+    midi_lbl = fonts['xs'].render(label, True, (180, 180, 180))
+    surface.blit(midi_lbl, (cx + (w - midi_lbl.get_width()) // 2, txt_y + 16))
+    freq_lbl = fonts['xs'].render(f"{freq:.1f} Hz", True, (120, 120, 120))
+    surface.blit(freq_lbl, (cx + (w - freq_lbl.get_width()) // 2, txt_y + 32))
+
+
+def _draw_empty_card(surface, fonts, cx, cy, w, h, hint_text):
+    """Draw an empty placeholder card."""
+    r = 6
+    pygame.draw.rect(surface, (18, 18, 24), (cx, cy, w, h), border_radius=r)
+    pygame.draw.rect(surface, (40, 40, 50), (cx, cy, w, h), 1, border_radius=r)
+    hint = fonts['xs'].render(hint_text, True, (50, 50, 55))
+    surface.blit(hint, (cx + (w - hint.get_width()) // 2, cy + h // 2 - hint.get_height() // 2))
 
 
 def draw_piano_roll_nodes(surface, fonts, note_states, node_trail,

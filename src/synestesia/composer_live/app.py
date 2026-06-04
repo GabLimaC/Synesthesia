@@ -682,7 +682,7 @@ def main():
             # Build palette swatch list: one swatch per selected note class
             seq = []
             for p in sorted(comp.palette_pick):
-                col = note_color(60 + LFI_DATA[p][0], SETTINGS["min_l"], SETTINGS["max_l"])
+                col = note_color(60 + p, SETTINGS["min_l"], SETTINGS["max_l"])
                 seq.append((p, col))
             box_w = 320
             swatch_sz = 22

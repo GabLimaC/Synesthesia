@@ -29,6 +29,8 @@ settings = {
     "trail_interval":  8.0,
     "trail_speed":     10.0,
     "palette_pick":    set(),  # canonical semitone indices (0-11)
+    "chords_mode":     False,  # when True, show all held-note relationships simultaneously
+    "circle_sequence": "pitch", # "pitch" = pitch space, "linear" = linear sequence (G0,G7,G2,G9,...)
 }
 
 # ────
@@ -42,9 +44,9 @@ class SideMenu:
 
         self.track_x    = 20
         self.track_w    = MENU_W - 40
-        self.echo_dry_y = 290
-        self.interval_y = 380
-        self.speed_y    = 460
+        self.echo_dry_y = 435
+        self.interval_y = 525
+        self.speed_y    = 605
 
     def resize(self, new_h):
         self.h = new_h
@@ -73,7 +75,12 @@ class SideMenu:
                 settings["mode"] = 1
             elif 140 <= my <= 170:
                 settings["mode"] = 2
-            elif 210 <= my <= 240 and settings.get("palette_pick") and mx > MENU_W - 60:
+            elif 218 <= my <= 246:
+                settings["chords_mode"] = not settings.get("chords_mode", False)
+            elif 290 <= my <= 318:
+                cur = settings.get("circle_sequence", "pitch")
+                settings["circle_sequence"] = "linear" if cur == "pitch" else "pitch"
+            elif 355 <= my <= 385 and settings.get("palette_pick") and mx > MENU_W - 60:
                 settings["palette_pick"].clear()
             elif self._slider_hit(mx, my, self.echo_dry_y):
                 self.drag = 'echo_dry'
@@ -137,8 +144,39 @@ class SideMenu:
 
         pygame.draw.line(surface, (45, 45, 45), (14, 185), (MENU_W - 14, 185))
 
+        # Chords mode toggle
+        cl = fonts['xs'].render("CHORDS MODE", True, (120, 120, 120))
+        surface.blit(cl, (20, 198))
+        chords_active = settings.get("chords_mode", False)
+        btn_color = (40, 80, 140) if chords_active else (35, 35, 35)
+        border = (80, 140, 220) if chords_active else (55, 55, 55)
+        pygame.draw.rect(surface, btn_color, (14, 218, MENU_W - 28, 28), border_radius=5)
+        pygame.draw.rect(surface, border, (14, 218, MENU_W - 28, 28), 1, border_radius=5)
+        ct = fonts['xs'].render("K — ON" if chords_active else "K — OFF", True,
+                               (230, 230, 230) if chords_active else (80, 80, 80))
+        surface.blit(ct, (22, 222))
+        hint_k = fonts['xs'].render("relations view", True, (70, 70, 70) if not chords_active else (160, 200, 255))
+        surface.blit(hint_k, (MENU_W - hint_k.get_width() - 16, 224))
+
+        # Circle sequence toggle
+        sl = fonts['xs'].render("CIRCLE SEQUENCE", True, (120, 120, 120))
+        surface.blit(sl, (20, 270))
+        seq = settings.get("circle_sequence", "pitch")
+        seq_lin = (seq == "linear")
+        btn_c = (40, 80, 140) if seq_lin else (35, 35, 35)
+        bdr_c = (80, 140, 220) if seq_lin else (55, 55, 55)
+        pygame.draw.rect(surface, btn_c, (14, 290, MENU_W - 28, 28), border_radius=5)
+        pygame.draw.rect(surface, bdr_c, (14, 290, MENU_W - 28, 28), 1, border_radius=5)
+        lb = fonts['xs'].render("Pitch Space" if not seq_lin else "Linear", True,
+                               (230, 230, 230) if seq_lin else (200, 200, 200))
+        surface.blit(lb, (22, 294))
+        hk = fonts['xs'].render("S", True, (70, 70, 70) if not seq_lin else (160, 200, 255))
+        surface.blit(hk, (MENU_W - hk.get_width() - 16, 296))
+
+        pygame.draw.line(surface, (45, 45, 45), (14, 330), (MENU_W - 14, 330))
+
         pl = fonts['xs'].render("PALETTE PICK", True, (120, 120, 120))
-        surface.blit(pl, (20, 200))
+        surface.blit(pl, (20, 345))
         pp = settings.get("palette_pick")
         if pp:
             pp_canonical = [LFI_DATA[p] for p in sorted(pp)]
@@ -148,30 +186,30 @@ class SideMenu:
                 entry_v = entry[3]
                 pp_color = _hsl(v_hue(entry_v), 100, 50)
                 swatch_x = 14 + idx * (swatch_w + swatch_gap)
-                pygame.draw.rect(surface, pp_color, (swatch_x, 218, swatch_w, swatch_h), border_radius=3)
-                pygame.draw.rect(surface, (200, 200, 200), (swatch_x, 218, swatch_w, swatch_h), 1, border_radius=3)
+                pygame.draw.rect(surface, pp_color, (swatch_x, 363, swatch_w, swatch_h), border_radius=3)
+                pygame.draw.rect(surface, (200, 200, 200), (swatch_x, 363, swatch_w, swatch_h), 1, border_radius=3)
             # Label line
             names = ", ".join(entry[1] for entry in pp_canonical)
             pp_label = fonts['xs'].render(f"Semitones {names}", True, (180, 180, 180))
-            surface.blit(pp_label, (14, 242))
+            surface.blit(pp_label, (14, 387))
             clear_btn = fonts['xs'].render("clear", True, (140, 100, 100))
-            surface.blit(clear_btn, (MENU_W - clear_btn.get_width() - 16, 220))
+            surface.blit(clear_btn, (MENU_W - clear_btn.get_width() - 16, 365))
         else:
             hint_p = fonts['xs'].render("click piano-roll note", True, (70, 70, 70))
-            surface.blit(hint_p, (20, 222))
+            surface.blit(hint_p, (20, 367))
 
-        pygame.draw.line(surface, (45, 45, 45), (14, 248), (MENU_W - 14, 248))
+        pygame.draw.line(surface, (45, 45, 45), (14, 393), (MENU_W - 14, 393))
 
         el = fonts['xs'].render("ECHO TAIL", True, (120, 120, 120))
-        surface.blit(el, (20, 262))
+        surface.blit(el, (20, 407))
         self._draw_slider(surface, fonts, "Dry (no pedal)",
                     settings["echo_dry"], self.echo_dry_y, (180, 140, 80), 0.05, 2.0,
                     fmt=f"{settings['echo_dry']:.2f}s")
 
-        pygame.draw.line(surface, (45, 45, 45), (14, 335), (MENU_W - 14, 335))
+        pygame.draw.line(surface, (45, 45, 45), (14, 480), (MENU_W - 14, 480))
 
         tl = fonts['xs'].render("PIANO ROLL TRAIL", True, (120, 120, 120))
-        surface.blit(tl, (20, 352))
+        surface.blit(tl, (20, 497))
         self._draw_slider(surface, fonts, "Trail segments",
                     settings["trail_interval"], self.interval_y, (160, 140, 220), 1.0, 50.0,
                     fmt=f"{int(settings['trail_interval'])}")
@@ -248,7 +286,7 @@ def main():
     # { 'left': (class, midi, color, label, v) | None, 'right': ditto | None }
     relation_pair = None
 
-    print("TAB = toggle menu  |  V = switch view  |  ESC = quit")
+    print("TAB = toggle menu  |  V = switch view  |  K = chords  |  S = circle seq  |  ESC = quit")
 
     running = True
     while running:
@@ -264,6 +302,11 @@ def main():
                     view_tab = 1 - view_tab
                     trail_columns.clear()
                     node_trail.clear()
+                elif event.key == pygame.K_k:
+                    settings["chords_mode"] = not settings["chords_mode"]
+                elif event.key == pygame.K_s:
+                    cur = settings.get("circle_sequence", "pitch")
+                    settings["circle_sequence"] = "linear" if cur == "pitch" else "pitch"
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
                 cx0 = MENU_W if menu.open else 0
@@ -494,7 +537,9 @@ def main():
                     palette_pick=settings.get("palette_pick"))
             else:
                 draw_piano_roll_relations(screen, fonts, note_states, relation_pair,
-                    content_x, content_w, W, H, BG)
+                    content_x, content_w, W, H, BG,
+                    chords_mode=settings.get("chords_mode", False),
+                    circle_sequence=settings.get("circle_sequence", "pitch"))
             # Sub-tab bar (drawn on top of trail area)
             draw_piano_roll_sub_tabs(screen, fonts, content_x, content_w, piano_roll_sub)
 

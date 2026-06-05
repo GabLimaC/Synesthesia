@@ -583,9 +583,9 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
 
     # ── circle sequence ──
     if circle_sequence == "linear":
-        circle_seq = [0, 5, 10, 3, 8, 1, 6, 11, 4, 9, 2, 7]
-    else:
         circle_seq = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]
+    else:
+        circle_seq = [0, 5, 10, 3, 8, 1, 6, 11, 4, 9, 2, 7]
     class_to_circle_pos = {cls: idx for idx, cls in enumerate(circle_seq)}
 
     # ── compute active note-class colors (only held) ──
@@ -659,7 +659,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
         if right_entry: pair_classes.add(right_entry[0])
 
     for idx, cls in enumerate(circle_seq):
-        ang = 2 * _m.pi * idx / 12 - _m.pi / 2
+        ang = -2 * _m.pi * idx / 12 - _m.pi / 2
         nx = circle_cx - circle_r * _m.cos(ang)
         ny = circle_cy + circle_r * _m.sin(ang)
         node_positions[cls] = (nx, ny)

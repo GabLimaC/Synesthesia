@@ -16,9 +16,12 @@ from ..engine import (
     LFI_DATA, get_color, lerp_c, midi_to_freq, v_hue, _hsl,
     draw_view_tabs, draw_piano_roll, draw_piano_roll_sub_tabs, draw_piano_roll_nodes,
     draw_piano_roll_relations,
+    draw_flow_sub_tabs, draw_flow_relations,
     PIANO_MIDI_MIN, PIANO_MIDI_MAX, PIANO_NOTE_COUNT,
     SQUARE_ROW_H, VIEW_TAB_H, SUB_TAB_H, NODE_RADIUS, MENU_W,
+    _SCALE_MODES,
 )
+from ..engine.core import _CLASS_TO_LINEAR_POS
 
 # ────
 # MUTABLE SETTINGS
@@ -31,6 +34,10 @@ settings = {
     "palette_pick":    set(),  # canonical semitone indices (0-11)
     "chords_mode":     False,  # when True, show all held-note relationships simultaneously
     "circle_sequence": "pitch", # "pitch" = pitch space, "linear" = linear sequence (G0,G7,G2,G9,...)
+    "scale_active":    False,  # toggle scale palette overlay on the note circle
+    "scale_ref":       0,      # generative position of reference note (0=G0…11=G11)
+    "scale_mode":      0,      # 0=Major, 1=Dorian, … 6=Locrian
+    "scale_alpha":     0.0,    # animated fade for the 7-gon (target=1.0 when active, 0.0 when off)
 }
 
 # ────
@@ -44,9 +51,9 @@ class SideMenu:
 
         self.track_x    = 20
         self.track_w    = MENU_W - 40
-        self.echo_dry_y = 435
-        self.interval_y = 525
-        self.speed_y    = 605
+        self.echo_dry_y = 240
+        self.interval_y = 315
+        self.speed_y    = 390
 
     def resize(self, new_h):
         self.h = new_h
@@ -75,13 +82,6 @@ class SideMenu:
                 settings["mode"] = 1
             elif 140 <= my <= 170:
                 settings["mode"] = 2
-            elif 218 <= my <= 246:
-                settings["chords_mode"] = not settings.get("chords_mode", False)
-            elif 290 <= my <= 318:
-                cur = settings.get("circle_sequence", "pitch")
-                settings["circle_sequence"] = "linear" if cur == "pitch" else "pitch"
-            elif 355 <= my <= 385 and settings.get("palette_pick") and mx > MENU_W - 60:
-                settings["palette_pick"].clear()
             elif self._slider_hit(mx, my, self.echo_dry_y):
                 self.drag = 'echo_dry'
                 settings["echo_dry"] = round(self._x_to_val(mx, 0.05, 2.0), 2)
@@ -144,72 +144,16 @@ class SideMenu:
 
         pygame.draw.line(surface, (45, 45, 45), (14, 185), (MENU_W - 14, 185))
 
-        # Chords mode toggle
-        cl = fonts['xs'].render("CHORDS MODE", True, (120, 120, 120))
-        surface.blit(cl, (20, 198))
-        chords_active = settings.get("chords_mode", False)
-        btn_color = (40, 80, 140) if chords_active else (35, 35, 35)
-        border = (80, 140, 220) if chords_active else (55, 55, 55)
-        pygame.draw.rect(surface, btn_color, (14, 218, MENU_W - 28, 28), border_radius=5)
-        pygame.draw.rect(surface, border, (14, 218, MENU_W - 28, 28), 1, border_radius=5)
-        ct = fonts['xs'].render("K — ON" if chords_active else "K — OFF", True,
-                               (230, 230, 230) if chords_active else (80, 80, 80))
-        surface.blit(ct, (22, 222))
-        hint_k = fonts['xs'].render("relations view", True, (70, 70, 70) if not chords_active else (160, 200, 255))
-        surface.blit(hint_k, (MENU_W - hint_k.get_width() - 16, 224))
-
-        # Circle sequence toggle
-        sl = fonts['xs'].render("CIRCLE SEQUENCE", True, (120, 120, 120))
-        surface.blit(sl, (20, 270))
-        seq = settings.get("circle_sequence", "pitch")
-        seq_lin = (seq == "linear")
-        btn_c = (40, 80, 140) if seq_lin else (35, 35, 35)
-        bdr_c = (80, 140, 220) if seq_lin else (55, 55, 55)
-        pygame.draw.rect(surface, btn_c, (14, 290, MENU_W - 28, 28), border_radius=5)
-        pygame.draw.rect(surface, bdr_c, (14, 290, MENU_W - 28, 28), 1, border_radius=5)
-        lb = fonts['xs'].render("Pitch Space" if not seq_lin else "Linear", True,
-                               (230, 230, 230) if seq_lin else (200, 200, 200))
-        surface.blit(lb, (22, 294))
-        hk = fonts['xs'].render("S", True, (70, 70, 70) if not seq_lin else (160, 200, 255))
-        surface.blit(hk, (MENU_W - hk.get_width() - 16, 296))
-
-        pygame.draw.line(surface, (45, 45, 45), (14, 330), (MENU_W - 14, 330))
-
-        pl = fonts['xs'].render("PALETTE PICK", True, (120, 120, 120))
-        surface.blit(pl, (20, 345))
-        pp = settings.get("palette_pick")
-        if pp:
-            pp_canonical = [LFI_DATA[p] for p in sorted(pp)]
-            swatch_w = 18; swatch_h = 18; swatch_gap = 4
-            for idx, entry in enumerate(pp_canonical):
-                p = entry[0]
-                entry_v = entry[3]
-                pp_color = _hsl(v_hue(entry_v), 100, 50)
-                swatch_x = 14 + idx * (swatch_w + swatch_gap)
-                pygame.draw.rect(surface, pp_color, (swatch_x, 363, swatch_w, swatch_h), border_radius=3)
-                pygame.draw.rect(surface, (200, 200, 200), (swatch_x, 363, swatch_w, swatch_h), 1, border_radius=3)
-            # Label line
-            names = ", ".join(entry[1] for entry in pp_canonical)
-            pp_label = fonts['xs'].render(f"Semitones {names}", True, (180, 180, 180))
-            surface.blit(pp_label, (14, 387))
-            clear_btn = fonts['xs'].render("clear", True, (140, 100, 100))
-            surface.blit(clear_btn, (MENU_W - clear_btn.get_width() - 16, 365))
-        else:
-            hint_p = fonts['xs'].render("click piano-roll note", True, (70, 70, 70))
-            surface.blit(hint_p, (20, 367))
-
-        pygame.draw.line(surface, (45, 45, 45), (14, 393), (MENU_W - 14, 393))
-
         el = fonts['xs'].render("ECHO TAIL", True, (120, 120, 120))
-        surface.blit(el, (20, 407))
+        surface.blit(el, (20, 198))
         self._draw_slider(surface, fonts, "Dry (no pedal)",
                     settings["echo_dry"], self.echo_dry_y, (180, 140, 80), 0.05, 2.0,
                     fmt=f"{settings['echo_dry']:.2f}s")
 
-        pygame.draw.line(surface, (45, 45, 45), (14, 480), (MENU_W - 14, 480))
+        pygame.draw.line(surface, (45, 45, 45), (14, 278), (MENU_W - 14, 278))
 
         tl = fonts['xs'].render("PIANO ROLL TRAIL", True, (120, 120, 120))
-        surface.blit(tl, (20, 497))
+        surface.blit(tl, (20, 290))
         self._draw_slider(surface, fonts, "Trail segments",
                     settings["trail_interval"], self.interval_y, (160, 140, 220), 1.0, 50.0,
                     fmt=f"{int(settings['trail_interval'])}")
@@ -286,7 +230,11 @@ def main():
     # { 'left': (class, midi, color, label, v) | None, 'right': ditto | None }
     relation_pair = None
 
-    print("TAB = toggle menu  |  V = switch view  |  K = chords  |  S = circle seq  |  ESC = quit")
+    # Flow sub-tab and relation color state
+    flow_sub = 0        # 0 = note color, 1 = relation color
+    flow_rel_state = {'ref': None, 'target': None, 'step': 0, 'sign': '', 'fade_alpha': 0.0}
+
+    print("TAB = menu  |  V = view  |  K = chords  |  S = circle seq  |  L = scale  |  [/] = mode  |  ESC = quit")
 
     running = True
     while running:
@@ -304,9 +252,18 @@ def main():
                     node_trail.clear()
                 elif event.key == pygame.K_k:
                     settings["chords_mode"] = not settings["chords_mode"]
+                elif event.key == pygame.K_b:
+                    if view_tab == 0:
+                        flow_sub = 1 - flow_sub
                 elif event.key == pygame.K_s:
                     cur = settings.get("circle_sequence", "pitch")
                     settings["circle_sequence"] = "linear" if cur == "pitch" else "pitch"
+                elif event.key == pygame.K_l:
+                    settings["scale_active"] = not settings["scale_active"]
+                elif event.key == pygame.K_LEFTBRACKET:
+                    settings["scale_mode"] = (settings["scale_mode"] - 1) % 7
+                elif event.key == pygame.K_RIGHTBRACKET:
+                    settings["scale_mode"] = (settings["scale_mode"] + 1) % 7
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
                 cx0 = MENU_W if menu.open else 0
@@ -317,6 +274,10 @@ def main():
                     view_tab = 0 if rel < cw0 // 2 else 1
                     trail_columns.clear()
                     node_trail.clear()
+                # Click on flow sub-tab bar
+                elif view_tab == 0 and VIEW_TAB_H <= my < VIEW_TAB_H + SUB_TAB_H and mx >= cx0:
+                    rel = mx - cx0
+                    flow_sub = int(rel / (cw0 / 2))
                 # Click on piano-roll sub-tab bar
                 elif view_tab == 1 and VIEW_TAB_H <= my < VIEW_TAB_H + SUB_TAB_H and mx >= cx0:
                     rel = mx - cx0
@@ -335,11 +296,57 @@ def main():
                             pick.discard(semitone)
                         else:
                             pick.add(semitone)
+                # Click on relations view controls (toggles, swipe, palette)
+                elif view_tab == 1 and piano_roll_sub == 2 and mx >= cx0:
+                    from ..engine.core import draw_piano_roll_relations as _rfn
+                    from ..engine.core import _swipe_state, _SCALE_MODES
+                    cr = getattr(_rfn, '_ctrl_rects', None)
+                    STEP_PX = 30
+                    if cr:
+                        for key, (rx, ry, rw, rh) in cr.items():
+                            if rx <= mx <= rx + rw and ry <= my <= ry + rh:
+                                if key == 'chords':
+                                    settings["chords_mode"] = not settings["chords_mode"]
+                                elif key == 'scale':
+                                    settings["scale_active"] = not settings["scale_active"]
+                                elif key == 'seq':
+                                    cur = settings.get("circle_sequence", "pitch")
+                                    settings["circle_sequence"] = "linear" if cur == "pitch" else "pitch"
+                                elif key == 'pal_clear':
+                                    settings["palette_pick"].clear()
+                                elif key == 'ref':
+                                    _swipe_state['drag'] = 'ref'
+                                    _swipe_state['start_mx'] = mx
+                                    _swipe_state['start_val'] = settings.get("scale_ref", 0)
+                                    _swipe_state['accum'] = 0.0
+                                elif key == 'mode':
+                                    _swipe_state['drag'] = 'mode'
+                                    _swipe_state['start_mx'] = mx
+                                    _swipe_state['start_val'] = settings.get("scale_mode", 0)
+                                    _swipe_state['accum'] = 0.0
+                                break
             elif event.type == pygame.VIDEORESIZE:
                 W, H = event.w, event.h
                 screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
                 menu.resize(H)
             menu.handle_event(event)
+            # swipe drag for relations view controls
+            if view_tab == 1 and piano_roll_sub == 2:
+                from ..engine.core import _swipe_state
+                if event.type == pygame.MOUSEMOTION and _swipe_state['drag'] is not None:
+                    mx = event.pos[0]
+                    delta = mx - _swipe_state['start_mx']
+                    _swipe_state['accum'] = delta
+                    STEP_PX = 30
+                    if _swipe_state['drag'] == 'ref':
+                        raw = _swipe_state['start_val'] - round(delta / STEP_PX)
+                        settings["scale_ref"] = max(0, min(11, raw))
+                    elif _swipe_state['drag'] == 'mode':
+                        raw = _swipe_state['start_val'] - round(delta / STEP_PX)
+                        settings["scale_mode"] = raw % 7
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    _swipe_state['drag'] = None
+                    _swipe_state['accum'] = 0.0
 
         # ── MIDI Input ────
         if midi_input.poll():
@@ -373,6 +380,43 @@ def main():
                             label=label, v=v, semitone=semitone, vel=velocity,
                             alpha=0.0, held=True, echo_timer=None,
                         )
+
+                    # ── flow relations tracking ──
+                    if view_tab == 0 and flow_sub == 1:
+                        cp = _CLASS_TO_LINEAR_POS[g_class]
+                        new_entry = (g_class, note, color, label, cp)
+                        if flow_rel_state['ref'] is None:
+                            flow_rel_state['ref'] = new_entry
+                            flow_rel_state['target'] = None
+                            flow_rel_state['step'] = 0
+                            flow_rel_state['sign'] = ''
+                            flow_rel_state['fade_alpha'] = 0.0
+                        elif g_class == flow_rel_state['ref'][0]:
+                            flow_rel_state['target'] = None
+                            flow_rel_state['step'] = 0
+                            flow_rel_state['sign'] = ''
+                            flow_rel_state['fade_alpha'] = 0.0
+                        else:
+                            # ref = prev note, target = latest note
+                            if flow_rel_state['target'] is not None:
+                                flow_rel_state['ref'] = flow_rel_state['target']
+                            flow_rel_state['target'] = new_entry
+                            rg = flow_rel_state['ref'][0]
+                            tg = flow_rel_state['target'][0]
+                            gen_dist = (tg - rg) % 12
+                            if gen_dist == 0:
+                                flow_rel_state['step'] = 0
+                                flow_rel_state['sign'] = ''
+                            elif gen_dist == 6:
+                                flow_rel_state['step'] = 6
+                                flow_rel_state['sign'] = '-R'
+                            elif gen_dist < 6:
+                                flow_rel_state['step'] = gen_dist
+                                flow_rel_state['sign'] = '+'
+                            else:
+                                flow_rel_state['step'] = 12 - gen_dist
+                                flow_rel_state['sign'] = '-'
+                            flow_rel_state['fade_alpha'] = 0.0
 
                     if view_tab == 1 and piano_roll_sub == 1:
                         if PIANO_MIDI_MIN <= note <= PIANO_MIDI_MAX:
@@ -450,6 +494,18 @@ def main():
             node_trail_top = VIEW_TAB_H + SUB_TAB_H
             node_trail = [n for n in node_trail if n['cy'] + NODE_RADIUS > node_trail_top]
 
+        # ── Scale palette alpha animation ──
+        target_alpha = 1.0 if settings.get("scale_active", False) else 0.0
+        current_alpha = settings.get("scale_alpha", 0.0)
+        if current_alpha < target_alpha:
+            current_alpha = min(target_alpha, current_alpha + 0.08)
+        elif current_alpha > target_alpha:
+            current_alpha = max(target_alpha, current_alpha - 0.08)
+        settings["scale_alpha"] = current_alpha
+
+        # ── Flow relations fade animation ──
+        flow_rel_state['fade_alpha'] = min(1.0, flow_rel_state['fade_alpha'] + 0.08)
+
         # ── Determine content area ────
         content_x = MENU_W if menu.open else 0
         content_w = W - content_x
@@ -458,72 +514,79 @@ def main():
         screen.fill(BG)
 
         if view_tab == 0:
-            # ── VIEW 0: original Flow view ────
-            if note_states:
-                sorted_notes = sorted(note_states.keys())   # low → high pitch
-                n_notes  = len(sorted_notes)
-                panel_w  = content_w // n_notes
+            # ── VIEW 0: original Flow view ──
+            if flow_sub == 0:
+                if note_states:
+                    sorted_notes = sorted(note_states.keys())   # low → high pitch
+                    n_notes  = len(sorted_notes)
+                    panel_w  = content_w // n_notes
 
-                for i, midi_note in enumerate(sorted_notes):
-                    ns    = note_states[midi_note]
-                    alpha = ns['alpha']
+                    for i, midi_note in enumerate(sorted_notes):
+                        ns    = note_states[midi_note]
+                        alpha = ns['alpha']
 
-                    # Lerp displayed color toward target (smooth chord transitions)
-                    ns['disp_color'] = lerp_c(ns['disp_color'], ns['color'], 0.25)
+                        # Lerp displayed color toward target (smooth chord transitions)
+                        ns['disp_color'] = lerp_c(ns['disp_color'], ns['color'], 0.25)
 
-                    # Apply per-note alpha: fade from BG to disp_color
-                    faded_color = lerp_c(BG, ns['disp_color'], alpha)
+                        # Apply per-note alpha: fade from BG to disp_color
+                        faded_color = lerp_c(BG, ns['disp_color'], alpha)
 
-                    px = content_x + i * panel_w
-                    pw = panel_w if i < n_notes - 1 else content_w - (n_notes - 1) * panel_w
+                        px = content_x + i * panel_w
+                        pw = panel_w if i < n_notes - 1 else content_w - (n_notes - 1) * panel_w
 
-                    # Panel background (leave room for tab bar at top)
-                    pygame.draw.rect(screen, faded_color, (px, VIEW_TAB_H, pw, H - VIEW_TAB_H))
+                        # Panel background (leave room for tab bar and sub-tabs at top)
+                        content_top = VIEW_TAB_H + SUB_TAB_H
+                        pygame.draw.rect(screen, faded_color, (px, content_top, pw, H - content_top))
 
-                    # Palette pick highlight border
-                    palette_pick = settings.get("palette_pick")
-                    if palette_pick and ns.get('semitone') in palette_pick:
-                        pygame.draw.rect(screen, (255, 200, 60), (px, VIEW_TAB_H, pw, H - VIEW_TAB_H), 3)
+                        # Palette pick highlight border
+                        palette_pick = settings.get("palette_pick")
+                        if palette_pick and ns.get('semitone') in palette_pick:
+                            pygame.draw.rect(screen, (255, 200, 60), (px, content_top, pw, H - content_top), 3)
 
-                    # Divider
-                    if i > 0:
-                        div_color = tuple(max(0, c - 30) for c in faded_color)
-                        pygame.draw.line(screen, div_color, (px, VIEW_TAB_H), (px, H), 2)
+                        # Divider
+                        if i > 0:
+                            div_color = tuple(max(0, c - 30) for c in faded_color)
+                            pygame.draw.line(screen, div_color, (px, content_top), (px, H), 2)
 
-                    # Note label
-                    cx_panel = px + pw // 2
-                    if pw >= 200:
-                        label_font = fonts['xl']
-                        info_font  = fonts['xs']
-                    elif pw >= 100:
-                        label_font = fonts['lg']
-                        info_font  = fonts['xs']
-                    else:
-                        label_font = fonts['sm']
-                        info_font  = None
+                        # Note label
+                        cx_panel = px + pw // 2
+                        if pw >= 200:
+                            label_font = fonts['xl']
+                            info_font  = fonts['xs']
+                        elif pw >= 100:
+                            label_font = fonts['lg']
+                            info_font  = fonts['xs']
+                        else:
+                            label_font = fonts['sm']
+                            info_font  = None
 
-                    txt_v     = int(alpha * 255)
-                    txt_color = (txt_v, txt_v, txt_v)
+                        txt_v     = int(alpha * 255)
+                        txt_color = (txt_v, txt_v, txt_v)
 
-                    big = label_font.render(ns['label'], True, txt_color)
-                    screen.blit(big, (cx_panel - big.get_width() // 2,
-                        VIEW_TAB_H + (H - VIEW_TAB_H) // 2 - big.get_height() // 2))
+                        big = label_font.render(ns['label'], True, txt_color)
+                        screen.blit(big, (cx_panel - big.get_width() // 2,
+                            content_top + (H - content_top) // 2 - big.get_height() // 2))
 
-                    if info_font and pw >= 140:
-                        freq     = midi_to_freq(midi_note)
-                        info_str = f"{freq:.1f}Hz  v={ns['v']:.3f}  vel={ns['vel']}"
-                        info_s   = info_font.render(info_str, True, txt_color)
+                        if info_font and pw >= 140:
+                            freq     = midi_to_freq(midi_note)
+                            info_str = f"{freq:.1f}Hz  v={ns['v']:.3f}  vel={ns['vel']}"
+                            info_s   = info_font.render(info_str, True, txt_color)
 
-                        strip = pygame.Surface((pw, 28), pygame.SRCALPHA)
-                        strip.fill((0, 0, 0, int(alpha * 140)))
-                        screen.blit(strip, (px, H - 30))
-                        screen.blit(info_s, (cx_panel - info_s.get_width() // 2, H - 24))
+                            strip = pygame.Surface((pw, 28), pygame.SRCALPHA)
+                            strip.fill((0, 0, 0, int(alpha * 140)))
+                            screen.blit(strip, (px, H - 30))
+                            screen.blit(info_s, (cx_panel - info_s.get_width() // 2, H - 24))
 
+                else:
+                    content_top = VIEW_TAB_H + SUB_TAB_H
+                    cx   = content_x + content_w // 2
+                    idle = fonts['sm'].render("play a note...", True, (50, 50, 50))
+                    screen.blit(idle, (cx - idle.get_width() // 2,
+                        content_top + (H - content_top) // 2 - 10))
             else:
-                cx   = content_x + content_w // 2
-                idle = fonts['sm'].render("play a note...", True, (50, 50, 50))
-                screen.blit(idle, (cx - idle.get_width() // 2,
-                    VIEW_TAB_H + (H - VIEW_TAB_H) // 2 - 10))
+                draw_flow_relations(screen, fonts, flow_rel_state, note_states,
+                    content_x, content_w, W, H, BG)
+            draw_flow_sub_tabs(screen, fonts, content_x, content_w, flow_sub)
 
         else:
             # ── VIEW 1: Piano Roll view ────
@@ -539,7 +602,12 @@ def main():
                 draw_piano_roll_relations(screen, fonts, note_states, relation_pair,
                     content_x, content_w, W, H, BG,
                     chords_mode=settings.get("chords_mode", False),
-                    circle_sequence=settings.get("circle_sequence", "pitch"))
+                    circle_sequence=settings.get("circle_sequence", "pitch"),
+                    scale_ref=settings.get("scale_ref", 0),
+                    scale_mode=settings.get("scale_mode", 0),
+                    scale_active=settings.get("scale_active", False),
+                    scale_alpha=settings.get("scale_alpha", 0.0),
+                    palette_pick=settings.get("palette_pick"))
             # Sub-tab bar (drawn on top of trail area)
             draw_piano_roll_sub_tabs(screen, fonts, content_x, content_w, piano_roll_sub)
 

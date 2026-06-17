@@ -25,4 +25,8 @@ from .core import (
     draw_rounded, draw_view_tabs, draw_piano_roll,
     draw_piano_roll_sub_tabs, draw_piano_roll_nodes,
     draw_piano_roll_relations,
+    draw_flow_sub_tabs, draw_flow_relations,
+    FLOW_REL_LABELS,
+    # scale mode definitions
+    _SCALE_MODES,
 )

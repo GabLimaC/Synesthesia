@@ -273,6 +273,24 @@ def draw_view_tabs(surface, fonts, content_x, content_w, view_tab):
                     VIEW_TAB_H // 2 - hint.get_height() // 2))
 
 
+def draw_flow_sub_tabs(surface, fonts, content_x, content_w, flow_sub):
+    """Draw a small sub-tab bar just below the main view tabs when in Flow view."""
+    y0 = VIEW_TAB_H
+    labels = ["NOTE COLOR", "RELATION COLOR"]
+    tw = content_w // len(labels)
+    for i, label in enumerate(labels):
+        tx = content_x + i * tw
+        active = (flow_sub == i)
+        bg     = (25, 25, 40) if active else (12, 12, 12)
+        fg     = (160, 180, 240) if active else (55, 55, 55)
+        border = (50, 65, 130) if active else (30, 30, 30)
+        pygame.draw.rect(surface, bg, (tx, y0, tw, SUB_TAB_H))
+        pygame.draw.rect(surface, border, (tx, y0, tw, SUB_TAB_H), 1)
+        lbl = fonts['xs'].render(label, True, fg)
+        surface.blit(lbl, (tx + tw // 2 - lbl.get_width() // 2,
+                    y0 + SUB_TAB_H // 2 - lbl.get_height() // 2))
+
+
 def draw_piano_roll(surface, fonts, note_states, trail_columns,
                     content_x, content_w, W, H, bg,
                     palette_pick=None, show_labels=True):
@@ -388,6 +406,28 @@ def draw_piano_roll_sub_tabs(surface, fonts, content_x, content_w, piano_roll_su
                     y0 + SUB_TAB_H // 2 - lbl.get_height() // 2))
 
 
+# ── scale mode definitions ──────────────────
+# Each mode selects a 7-note subset of the 12 generated classes.
+# Modes are defined as a window of 7 consecutive GENERATIVE positions.
+# Mode m: window = [ref − (m+1), ref + (5−m)]  (7 consecutive gen positions)
+_SCALE_MODES = [
+    (0, "Major",      "Major (Ionian)"),      # ref−1 … ref+5
+    (1, "Dorian",     "Dorian"),              # ref−2 … ref+4
+    (2, "Phrygian",   "Phrygian"),            # ref−3 … ref+3
+    (3, "Lydian",     "Lydian"),              # ref−4 … ref+2
+    (4, "Mixolydian", "Mixolydian"),          # ref−5 … ref+1
+    (5, "Nat Minor",  "Natural Minor"),       # ref−6 … ref+0
+    (6, "Locrian",    "Locrian"),             # ref−7 … ref−1
+]
+
+def _scale_classes(ref_gen, mode_idx):
+    """Return sorted list of G-classes (generative positions) for the scale.
+    ref_gen: generative position of reference note (0=G0, 1=G1, …).
+    mode_idx: 0=Major, 1=Dorian, … 6=Locrian.
+    Result is sorted by generative position (not circle order)."""
+    m = mode_idx; start = (ref_gen - (m + 1)) % 12
+    return sorted((start + i) % 12 for i in range(7))
+
 # ── relations view ──────────────────────────
 # LINEAR sequence (frequency order) for circle placement: G0, G7, G2, G9, G4, G11, G6, G1, G8, G3, G10, G5
 _LINEAR_SEQ = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]
@@ -413,12 +453,22 @@ _relation_anim = {
     'travel_active': False,
 }
 
+# swipe state for scale controls in relations view
+_swipe_state = {
+    'drag': None,       # 'ref' | 'mode' | None
+    'start_mx': 0,
+    'start_val': 0,     # value at swipe start
+    'accum': 0.0,       # current px displacement
+}
+
 _STEP_NAMES = {1: "±1 Starburst", 2: "±2 Hexagons", 3: "±3 Squares",
                4: "±4 Triangles", 5: "±5 12-gon", 6: "6 Midpoint"}
 _STEP_STYLES = {1: 'double', 2: 'dotdash', 3: 'longdash',
                 4: 'solid', 5: 'dotted', 6: 'anchored'}
 _STEP_COLORS = {1: (0, 217, 255), 2: (255, 128, 255), 3: (255, 230, 0),
                 4: (0, 230, 60), 5: (255, 150, 0), 6: (255, 50, 60)}
+
+FLOW_REL_LABELS = ["1 (R)", "-5", "+2", "-3", "+4", "+1", "-R", "-1", "-4", "+3", "-2", "+5"]
 
 
 def _lfi_lerp(h0, h1, t):
@@ -571,8 +621,14 @@ def _build_relations_slots():
 
 
 def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
-                              content_x, content_w, W, H, bg, chords_mode=False, circle_sequence="pitch"):
-    """Relations view: circle + big box (pair visualizer) + bottom slots."""
+                              content_x, content_w, W, H, bg, chords_mode=False, circle_sequence="pitch",
+                              scale_ref=0, scale_mode=0, scale_active=False, scale_alpha=0.0,
+                              palette_pick=None):
+    """Relations view: circle + big box (pair visualizer) + bottom slots.
+    scale_ref: generative position of scale reference (0=G0…11=G11).
+    scale_mode: 0=Major, 1=Dorian, … 6=Locrian.
+    scale_active: whether the scale palette feature is turned on.
+    scale_alpha: fade animation alpha for the 7-gon (0.0–1.0)."""
     import math as _m
     area_top = VIEW_TAB_H + SUB_TAB_H
     highlight_h = _REL_SLOT_RECT_H
@@ -684,6 +740,50 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
             ly = int(ny + node_radius + 4)
             surface.blit(lbl, (lx, ly))
 
+    # ── scale palette 7-gon ──
+    if scale_active and scale_alpha > 0.01:
+        scale_classes = _scale_classes(scale_ref, scale_mode)
+        scale_surf = pygame.Surface((circle_diam, circle_diam), pygame.SRCALPHA)
+        # build polygon vertices in circle (LINEAR) order
+        verts = []
+        ref_xy = None
+        for cls in scale_classes:
+            if cls in node_positions:
+                if scale_ref == cls:
+                    ref_xy = node_positions[cls]
+                verts.append((cls, node_positions[cls]))
+        # sort by circle position so the polygon edges follow the circle arc
+        verts.sort(key=lambda v: class_to_circle_pos.get(v[0], 0))
+        if len(verts) >= 3:
+            pts_local = [(v[0] - circle_x, v[1] - circle_y) for _, v in verts]
+            # subtle fill
+            fill_alpha = int(scale_alpha * 38)
+            if fill_alpha > 0:
+                pygame.draw.polygon(scale_surf, (60, 50, 70, fill_alpha), pts_local)
+            # outline edges with hue-gradients
+            edge_alpha = int(scale_alpha * 100)
+            for i in range(len(verts)):
+                cls_a, (ax, ay) = verts[i]
+                cls_b, (bx, by) = verts[(i + 1) % len(verts)]
+                la = ax - circle_x; la_y = ay - circle_y
+                lb = bx - circle_x; lb_y = by - circle_y
+                dist = _m.hypot(lb - la, lb_y - la_y)
+                segs = max(1, int(dist / 3))
+                for si in range(segs):
+                    t0 = si / segs; t1 = (si + 1) / segs
+                    x0 = la + (lb - la) * t0; y0 = la_y + (lb_y - la_y) * t0
+                    x1 = la + (lb - la) * t1; y1 = la_y + (lb_y - la_y) * t1
+                    h = _lfi_lerp(v_hue(SEM[cls_a][3]), v_hue(SEM[cls_b][3]), (t0 + t1) * 0.5)
+                    c = _hsl(h, 100, 50)
+                    pygame.draw.line(scale_surf, (*c, edge_alpha),
+                        (int(x0), int(y0)), (int(x1), int(y1)), 2)
+            # reference node marker
+            if ref_xy:
+                rlx, rly = ref_xy[0] - circle_x, ref_xy[1] - circle_y
+                pygame.draw.circle(scale_surf, (255, 255, 255, int(scale_alpha * 180)),
+                    (int(rlx), int(rly)), node_radius + 5, 2)
+            surface.blit(scale_surf, (circle_x, circle_y))
+
     # ── polygon shadow + chord for relation pair ──
     if chords_mode:
         held_classes = sorted(active_classes.keys())
@@ -719,7 +819,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                     cl_a = held_classes[i]; cl_b = held_classes[j]
                     step, direction = _compute_generative_step(cl_a, cl_b)
                     style = _STEP_STYLES.get(step, 'solid')
-                    style_color = _STEP_COLORS.get(step, (200, 200, 200))
+                    style_color = _STEP_COLORS.get(step, (200, 200, 200)); fsign = -1.0 if direction == 'cw' else 1.0
 
                     ax, ay = node_positions[cl_a]; bx, by = node_positions[cl_b]
                     dx, dy = bx - ax, by - ay
@@ -750,7 +850,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                                 y0 = lsy + ldy * t0 + sign * offset * ny
                                 x1 = lsx + ldx * t1 + sign * offset * nx
                                 y1 = lsy + ldy * t1 + sign * offset * ny
-                                h = _arc_hue_chord((t0 + t1) * 0.5, cl_a, cl_b, circle_seq=circle_seq)
+                                h = _arc_hue_chord((t0 + t1) * 0.5, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                                 c = _hsl(h, 100, 50)
                                 pygame.draw.line(chord_overlay, (*c, alpha_a),
                                     (int(x0), int(y0)), (int(x1), int(y1)), max(1, 3 - step // 2))
@@ -759,7 +859,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                             t0 = si / segs; t1 = (si + 1) / segs
                             x0 = lsx + ldx * t0; y0 = lsy + ldy * t0
                             x1 = lsx + ldx * t1; y1 = lsy + ldy * t1
-                            h = _arc_hue_chord((t0 + t1) * 0.5, cl_a, cl_b, circle_seq=circle_seq)
+                            h = _arc_hue_chord((t0 + t1) * 0.5, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                             c = _hsl(h, 100, 50)
                             w = max(2, 5 - step // 2)
                             pygame.draw.line(chord_overlay, (*c, alpha_a), (int(x0), int(y0)), (int(x1), int(y1)), w)
@@ -768,7 +868,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                         for sign in (-1, 1):
                             ox0 = lsx + sign * half_w * nx; oy0 = lsy + sign * half_w * ny
                             ox1 = lex + sign * half_w * nx; oy1 = ley + sign * half_w * ny
-                            h = _arc_hue_chord(0.5, cl_a, cl_b, circle_seq=circle_seq)
+                            h = _arc_hue_chord(0.5, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                             c = _hsl(h, 100, 50)
                             pygame.draw.line(chord_overlay, (*c, alpha_a), (int(ox0), int(oy0)), (int(ox1), int(oy1)), max(2, half_w))
                         pygame.draw.circle(chord_overlay, (*style_color, alpha_b), (int(lsx), int(lsy)), 3)
@@ -778,7 +878,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                         for di in range(n_dots + 1):
                             t = di / n_dots
                             x = lsx + ldx * t; y = lsy + ldy * t
-                            h = _arc_hue_chord(t, cl_a, cl_b, circle_seq=circle_seq)
+                            h = _arc_hue_chord(t, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                             c = _hsl(h, 100, 50)
                             pygame.draw.circle(chord_overlay, (*c, alpha_a), (int(x), int(y)), max(2, 4 - step // 2))
                     elif style == 'dotdash':
@@ -791,7 +891,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                                 for si in range(max(1, int((t1 - t0) * chord_dist / 3))):
                                     lt = t0 + (t1 - t0) * si / max(1, int((t1 - t0) * chord_dist / 3))
                                     rt = min(t1, lt + (t1 - t0) / max(1, int((t1 - t0) * chord_dist / 3)))
-                                    h = _arc_hue_chord((lt + rt) * 0.5, cl_a, cl_b, circle_seq=circle_seq)
+                                    h = _arc_hue_chord((lt + rt) * 0.5, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                                     c = _hsl(h, 100, 50)
                                     pygame.draw.line(chord_overlay, (*c, alpha_a),
                                         (int(lsx + ldx * lt), int(lsy + ldy * lt)),
@@ -799,7 +899,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                             td = min(t1 + gap / chord_dist, 1.0); t0d = td + dot / chord_dist
                             if t0d > td:
                                 t_mid = (td + t0d) * 0.5
-                                h = _arc_hue_chord(t_mid, cl_a, cl_b, circle_seq=circle_seq)
+                                h = _arc_hue_chord(t_mid, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                                 c = _hsl(h, 100, 50)
                                 pygame.draw.circle(chord_overlay, (*c, alpha_a),
                                     (int(lsx + ldx * t_mid), int(lsy + ldy * t_mid)), max(1, 3 - step // 2))
@@ -812,7 +912,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                             for si in range(max(1, int((t1 - t0) * chord_dist / 3))):
                                 lt = t0 + (t1 - t0) * si / max(1, int((t1 - t0) * chord_dist / 3))
                                 rt = min(t1, lt + (t1 - t0) / max(1, int((t1 - t0) * chord_dist / 3)))
-                                h = _arc_hue_chord((lt + rt) * 0.5, cl_a, cl_b, circle_seq=circle_seq)
+                                h = _arc_hue_chord((lt + rt) * 0.5, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                                 c = _hsl(h, 100, 50)
                                 pygame.draw.line(chord_overlay, (*c, alpha_a),
                                     (int(lsx + ldx * lt), int(lsy + ldy * lt)),
@@ -820,9 +920,18 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
 
                     # midpoint indicator dot
                     mx = (lsx + lex) / 2; my = (lsy + ley) / 2
-                    h_mid = _arc_hue_chord(0.5, cl_a, cl_b, circle_seq=circle_seq)
+                    h_mid = _arc_hue_chord(0.5, cl_a, cl_b, flow_sign=fsign, circle_seq=circle_seq)
                     mid_c = _hsl(h_mid, 100, 75)
                     pygame.draw.circle(chord_overlay, (*mid_c, 220), (int(mx), int(my)), 4)
+
+                    # ── directional arrow tip ──
+                    if step != 6:
+                        if direction == 'cw':
+                            arr_angle = _m.atan2(ldy, ldx)
+                            _draw_arrow_tip(chord_overlay, style_color, (int(lex), int(ley)), arr_angle, size=7)
+                        else:
+                            arr_angle = _m.atan2(ldy, ldx) + _m.pi
+                            _draw_arrow_tip(chord_overlay, style_color, (int(lsx), int(lsy)), arr_angle, size=7)
 
             surface.blit(chord_overlay, (circle_x, circle_y))
     elif relation_pair and relation_pair.get('left') and relation_pair.get('right'):
@@ -942,7 +1051,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                                 if i % 2 == 0:
                                     sn = max(1, int((t1 - t0) * cl / 2))
                                     for s in range(sn):
-                                        lt = t0 + (t1 - t0) * s / sn; rt = t0 + (t1 - t0) * (s + 1) / sn
+                                        lt = t0 + (t1 - t0) * s / sn;                                         rt = t0 + (t1 - t0) * (s + 1) / sn
                                         h = _arc_hue_chord((lt + rt) * 0.5, left_cls, right_cls, circle_seq=circle_seq)
                                         c = _hsl(h, 100, 50)
                                         pygame.draw.line(surface, c,
@@ -961,7 +1070,7 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
                                 if t1 <= t0: continue
                                 sn = max(1, int((t1 - t0) * cl / 2))
                                 for s in range(sn):
-                                    lt = t0 + (t1 - t0) * s / sn; rt = t0 + (t1 - t0) * (s + 1) / sn
+                                    lt = t0 + (t1 - t0) * s / sn;                                     rt = t0 + (t1 - t0) * (s + 1) / sn
                                     h = _arc_hue_chord((lt + rt) * 0.5, left_cls, right_cls, circle_seq=circle_seq)
                                     c = _hsl(h, 100, 50)
                                     pygame.draw.line(surface, c,
@@ -1217,6 +1326,95 @@ def draw_piano_roll_relations(surface, fonts, note_states, relation_pair,
             surface.blit(idle, (box_x + (box_w - idle.get_width()) // 2, conn_y - 8))
 
     # ═══════════════════════════════════════════
+    # CONTROL BAR — chords, scale, sequence, palette (below circle/box, above slots)
+    # ═══════════════════════════════════════════
+    CTRL_H = 56; ctrl_y = highlight_y - CTRL_H - 4
+    ctrl_x0 = content_x + 8; ctrl_w = content_w - 16
+    ctrl_rects = {}  # stored on function for click handling
+
+    # row 1: toggle buttons
+    cr_y = ctrl_y + 3
+    tw = 54; th = 18; gap = 6
+
+    def _draw_toggle(name, key, active, bx):
+        bg = (40, 80, 140) if active else (28, 28, 28)
+        brd = (80, 140, 220) if active else (45, 45, 45)
+        fg = (220, 220, 230) if active else (100, 100, 100)
+        pygame.draw.rect(surface, bg, (bx, cr_y, tw, th), border_radius=4)
+        pygame.draw.rect(surface, brd, (bx, cr_y, tw, th), 1, border_radius=4)
+        t = fonts['xs'].render(f"{key}:{name}", True, fg)
+        surface.blit(t, (bx + (tw - t.get_width()) // 2, cr_y + 1))
+        return (bx, cr_y, tw, th)
+
+    bx = ctrl_x0
+    r = _draw_toggle("CHRD", "K", chords_mode, bx); ctrl_rects['chords'] = r; bx += tw + gap
+    r = _draw_toggle("SCL", "L", scale_active, bx); ctrl_rects['scale'] = r; bx += tw + gap
+    seq_is_lin = (circle_sequence == "linear")
+    r = _draw_toggle("SEQ", "S", seq_is_lin, bx); ctrl_rects['seq'] = r; bx += tw + gap
+
+    # sequence label detail
+    seq_det = fonts['xs'].render("Linear" if seq_is_lin else "Pitch", True, (120, 150, 200) if seq_is_lin else (80, 80, 100))
+    surface.blit(seq_det, (bx, cr_y + 1))
+    bx += seq_det.get_width() + 6
+
+    # palette pick swatches
+    pp = palette_pick
+    if pp and len(pp) > 0:
+        pp_list = sorted(pp)
+        sw_s = 12; sw_gap = 3
+        for i, sem in enumerate(pp_list):
+            entry = SEM[sem]; sc = _hsl(v_hue(entry[3]), 100, 50)
+            sx = bx + i * (sw_s + sw_gap)
+            pygame.draw.rect(surface, sc, (int(sx), cr_y + 3, sw_s, sw_s), border_radius=2)
+            pygame.draw.rect(surface, (180, 180, 180), (int(sx), cr_y + 3, sw_s, sw_s), 1, border_radius=2)
+        bx += len(pp_list) * (sw_s + sw_gap) + 6
+        clr = fonts['xs'].render("clear", True, (140, 100, 100))
+        surface.blit(clr, (bx, cr_y + 1))
+        ctrl_rects['pal_clear'] = (bx, cr_y, clr.get_width(), clr.get_height())
+        bx += clr.get_width() + 8
+
+    # row 2: swipe selectors
+    cr_y2 = ctrl_y + 28
+    STEP_PX = 30
+    ss = _swipe_state
+
+    for sw_key, sw_val, sw_lo, sw_hi, sw_lbl, sw_fmt in [
+        ('ref', scale_ref, 0, 11, "Ref", lambda v: f"G{v}"),
+        ('mode', scale_mode, 0, 6, "Mode", lambda v: _SCALE_MODES[v][1]),
+    ]:
+        # draw label
+        lbl = fonts['xs'].render(sw_lbl + ":", True, (100, 100, 100))
+        surface.blit(lbl, (bx, cr_y2 + 2))
+        bx += lbl.get_width() + 6
+        # swipe area
+        sw_w = 110; sw_cx = bx + sw_w // 2
+        off = ss['accum'] if ss['drag'] == sw_key else 0.0
+        # center the value + offset from swipe
+        val_txt = sw_fmt(sw_val)
+        val = fonts['xs'].render(val_txt, True, (220, 220, 230))
+        vx = sw_cx - val.get_width() // 2 + int(off)
+        # prev / next dimmed
+        if sw_val > sw_lo:
+            pv = fonts['xs'].render(sw_fmt(sw_val - 1), True, (55, 55, 55))
+            surface.blit(pv, (vx - 50 - pv.get_width() // 2, cr_y2 + 2))
+        if sw_val < sw_hi:
+            nv = fonts['xs'].render(sw_fmt(sw_val + 1), True, (55, 55, 55))
+            surface.blit(nv, (vx + 50 - nv.get_width() // 2, cr_y2 + 2))
+        # arrows
+        la = fonts['xs'].render("<", True, (80, 80, 80))
+        ra = fonts['xs'].render(">", True, (80, 80, 80))
+        surface.blit(la, (vx - 36, cr_y2 + 1))
+        surface.blit(ra, (vx + val.get_width() + 10, cr_y2 + 1))
+        # value
+        surface.blit(val, (vx, cr_y2 + 2))
+        # underline
+        pygame.draw.line(surface, (60, 60, 75), (bx, cr_y2 + 21), (bx + sw_w, cr_y2 + 21), 1)
+        ctrl_rects[sw_key] = (bx, cr_y2, sw_w, 22)
+        bx += sw_w + 16
+
+    draw_piano_roll_relations._ctrl_rects = ctrl_rects
+
+    # ═══════════════════════════════════════════
     # BOTTOM SLOTS — highlight + generative sequence row
     # ═══════════════════════════════════════════
     slot_w = content_w / _REL_SLOTS
@@ -1444,3 +1642,229 @@ def draw_piano_roll_nodes(surface, fonts, note_states, node_trail,
         idle = fonts['sm'].render("play a note...", True, (50, 50, 50))
         surface.blit(idle, (cx - idle.get_width() // 2,
                     trail_area_top + trail_area_h // 2 - 10))
+
+
+def draw_flow_relations(surface, fonts, flow_rel_state, note_states,
+                         content_x, content_w, W, H, bg):
+    """Flow Relations view: inscribed-circle shapes colored by target's LFI hue."""
+    import math as _m
+    area_top = VIEW_TAB_H + SUB_TAB_H
+    margin = 8
+    area_bot = H - margin
+    free_h = area_bot - area_top
+    info_h = 50
+
+    circle_diam = min(free_h - info_h - 8, content_w - 32)
+    circle_x = content_x + (content_w - circle_diam) // 2
+    circle_y = area_top + 8
+    circle_cx = circle_x + circle_diam // 2
+    circle_cy = circle_y + circle_diam // 2
+    circle_r = circle_diam // 2 - 26
+    local_cx = circle_diam // 2; local_cy = circle_diam // 2
+
+    # Build node positions (LINEAR sequence order, G0 at top)
+    node_positions = {}
+    node_radius = min(8, max(4, circle_r // 8))
+    for idx, cls in enumerate(_LINEAR_SEQ):
+        ang = -2 * _m.pi * idx / 12 - _m.pi / 2
+        nx = circle_cx - circle_r * _m.cos(ang)
+        ny = circle_cy + circle_r * _m.sin(ang)
+        node_positions[cls] = (nx, ny)
+
+    # Active (held) classes
+    active_classes = set()
+    for midi_note, ns in note_states.items():
+        if ns.get('held'):
+            semi = (midi_note - 60) % 12
+            active_classes.add(_LINEAR_CHROMATIC_MAP[semi])
+
+    # Extract state
+    ref = flow_rel_state.get('ref')
+    target = flow_rel_state.get('target')
+    step = flow_rel_state.get('step', 0)
+    sign = flow_rel_state.get('sign', '')
+    fade_alpha = flow_rel_state.get('fade_alpha', 0.0)
+
+    # Alpha overlay surface for shapes (circle-sized)
+    shape_surf = pygame.Surface((circle_diam, circle_diam), pygame.SRCALPHA)
+
+    # ── Blue inscribed circle (step=0, octave) ──
+    if ref is not None and step == 0 and fade_alpha > 0.01:
+        blue_r = int(circle_r * 0.38)
+        a = int(140 * fade_alpha)
+        pygame.draw.circle(shape_surf, (0, 0, 255, a), (local_cx, local_cy), blue_r)
+        ba = int(220 * fade_alpha)
+        pygame.draw.circle(shape_surf, (255, 255, 255, ba), (local_cx, local_cy), blue_r, 3)
+
+    # ── Midpoint line (step=6) ──
+    elif ref is not None and target is not None and step == 6 and fade_alpha > 0.01:
+        lc = _hsl(v_hue(SEM[6][3]), 100, 50)
+        ref_cls = ref[0]; ref_lin = _CLASS_TO_LINEAR_POS[ref_cls]
+        opp_lin = (ref_lin + 6) % 12; opp_cls = _LINEAR_SEQ[opp_lin]
+        rx, ry = node_positions[ref_cls]; ox, oy = node_positions[opp_cls]
+        lrx, lry = rx - circle_x, ry - circle_y
+        lox, loy = ox - circle_x, oy - circle_y
+        ea = int(220 * fade_alpha)
+        pygame.draw.line(shape_surf, (*lc, ea), (int(lrx), int(lry)), (int(lox), int(loy)), 8)
+        da = int(255 * fade_alpha)
+        pygame.draw.circle(shape_surf, (*lc, da), (int(lrx), int(lry)), 5)
+        pygame.draw.circle(shape_surf, (*lc, da), (int(lox), int(loy)), 5)
+
+    # ── Inscribed n-gon / starburst (step 1-5) ──
+    elif ref is not None and target is not None and step >= 1 and fade_alpha > 0.01:
+        rel_class = step if sign == '+' else (12 - step) % 12
+        ec = _hsl(v_hue(SEM[rel_class][3]), 100, 50)
+        n_sides = 12 // _m.gcd(step, 12)
+        vertices = [(ref[0] + i * step) % 12 for i in range(n_sides)]
+
+        lpts = [(int(node_positions[c][0] - circle_x), int(node_positions[c][1] - circle_y)) for c in vertices]
+
+        # ── Sub-shapes (outlines on top of edges) ──
+        if step == 2 and len(vertices) == 6:
+            # Hexagon skeleton: two interleaved triangles (step 4 color, parent sign)
+            hx_rel = 4 if sign == '+' else (12 - 4) % 12
+            hx_color = _hsl(v_hue(SEM[hx_rel][3]), 100, 50)
+            tri_a = [lpts[i] for i in (0, 2, 4)]; tri_b = [lpts[i] for i in (1, 3, 5)]
+            a180 = int(180 * fade_alpha); sw = 2
+            pygame.draw.polygon(shape_surf, (*hx_color, a180), tri_a, sw)
+            pygame.draw.polygon(shape_surf, (*hx_color, a180), tri_b, sw)
+
+        elif step == 5 and len(vertices) == 12:
+            # 12-gon decomposition: all constituent sub-shapes
+            a180 = int(180 * fade_alpha); sw = 2
+            sr = lambda ss, sgn: _hsl(v_hue(SEM[ss if sgn == '+' else (12 - ss) % 12][3]), 100, 50)
+            # 2 hexagons (step 2)
+            c2 = sr(2, sign)
+            hex_a = [lpts[i] for i in (0, 2, 4, 6, 8, 10)]
+            hex_b = [lpts[i] for i in (1, 3, 5, 7, 9, 11)]
+            pygame.draw.polygon(shape_surf, (*c2, a180), hex_a, sw)
+            pygame.draw.polygon(shape_surf, (*c2, a180), hex_b, sw)
+            # 3 squares (step 3, inherit parent sign)
+            c3 = sr(3, sign)
+            sq0 = [lpts[i] for i in (0, 3, 6, 9)]
+            sq1 = [lpts[i] for i in (1, 4, 7, 10)]
+            sq2 = [lpts[i] for i in (2, 5, 8, 11)]
+            pygame.draw.polygon(shape_surf, (*c3, a180), sq0, sw)
+            pygame.draw.polygon(shape_surf, (*c3, a180), sq1, sw)
+            pygame.draw.polygon(shape_surf, (*c3, a180), sq2, sw)
+            # 4 triangles (step 4, inherit parent sign)
+            c4 = sr(4, sign)
+            tri0 = [lpts[i] for i in (0, 4, 8)]
+            tri1 = [lpts[i] for i in (1, 5, 9)]
+            tri2 = [lpts[i] for i in (2, 6, 10)]
+            tri3 = [lpts[i] for i in (3, 7, 11)]
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri0, sw)
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri1, sw)
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri2, sw)
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri3, sw)
+            # 1 starburst (step 1, inherit parent sign)
+            c1_sr = sr(1, sign)
+            pygame.draw.polygon(shape_surf, (*c1_sr, a180), lpts, sw)
+
+        # Edges
+        for i in range(len(vertices)):
+            ca, cb = vertices[i], vertices[(i + 1) % len(vertices)]
+            lax, lay = node_positions[ca]; lbx, lby = node_positions[cb]
+            lx0, ly0 = int(lax - circle_x), int(lay - circle_y)
+            lx1, ly1 = int(lbx - circle_x), int(lby - circle_y)
+            is_chord = {ca, cb} == {ref[0], target[0]}
+            ea = int(255 * fade_alpha) if is_chord else int(220 * fade_alpha)
+            w = 8 if is_chord else 6
+            if is_chord:
+                pygame.draw.line(shape_surf, (255, 255, 255, int(255 * fade_alpha)),
+                    (lx0, ly0), (lx1, ly1), w + 2)
+            pygame.draw.line(shape_surf, (*ec, ea), (lx0, ly0), (lx1, ly1), w)
+            if is_chord:
+                # Arrow from ref toward target
+                if ca == ref[0]: sx, sy = lx0, ly0; ex, ey = lx1, ly1
+                else:            sx, sy = lx1, ly1; ex, ey = lx0, ly0
+                dx = ex - sx; dy = ey - sy
+                length = _m.sqrt(dx * dx + dy * dy)
+                if length > 0:
+                    ndx = dx / length; ndy = dy / length
+                    px = -ndy; py = ndx; aa = int(255 * fade_alpha); ars = 14
+                    white = (255, 255, 255, aa)
+                    for frac in (0.35, 0.55, 0.75):
+                        ax = int(sx + ndx * length * frac)
+                        ay = int(sy + ndy * length * frac)
+                        bx = int(ax - ndx * ars); by = int(ay - ndy * ars)
+                        lx = bx + int(px * ars * 0.5); ly = by + int(py * ars * 0.5)
+                        rx = bx - int(px * ars * 0.5); ry = by - int(py * ars * 0.5)
+                        pygame.draw.polygon(shape_surf, white,
+                            [(ax, ay), (lx, ly), (rx, ry)])
+
+        # Ref vertex dot
+        rx, ry = node_positions[ref[0]]
+        da = int(255 * fade_alpha)
+        pygame.draw.circle(shape_surf, (*ec, da), (int(rx - circle_x), int(ry - circle_y)), 5)
+
+    # Blit shape overlay
+    surface.blit(shape_surf, (circle_x, circle_y))
+
+    # ── Draw nodes and labels ──
+    ticks = pygame.time.get_ticks()
+    for idx, cls in enumerate(_LINEAR_SEQ):
+        nx, ny = node_positions[cls]
+        is_held = cls in active_classes
+        is_ref = (ref is not None and ref[0] == cls)
+        is_target = (target is not None and target[0] == cls)
+
+        # Node dot (dim)
+        blink = (math.sin(ticks * 0.025) + 1) / 2 if is_held else 0.3
+        dot_col = tuple(int(80 + 80 * blink) for _ in range(3)) if is_held else (60, 60, 60)
+        pygame.draw.circle(surface, dot_col, (int(nx), int(ny)), node_radius)
+        pygame.draw.circle(surface, (120, 120, 120), (int(nx), int(ny)), node_radius, 1)
+
+        # Highlight rings
+        if is_held:
+            ring_b = int(160 + 95 * blink)
+            pygame.draw.circle(surface, (ring_b, ring_b, ring_b),
+                (int(nx), int(ny)), node_radius + 3, 1)
+
+        if is_ref:
+            pygame.draw.circle(surface, (255, 255, 255),
+                (int(nx), int(ny)), node_radius + 5, 2)
+            pygame.draw.circle(surface, (255, 255, 255),
+                (int(nx), int(ny)), 3)
+
+        if is_target:
+            tgt_h = v_hue(SEM[target[0]][3]); tc = _hsl(tgt_h, 100, 50)
+            pygame.draw.circle(surface, tc, (int(nx), int(ny)), node_radius + 3, 2)
+
+        # Fixed label
+        lbl_fg = (210, 210, 210) if (is_held or is_ref) else (100, 100, 100)
+        lbl = fonts['xs'].render(FLOW_REL_LABELS[idx], True, lbl_fg)
+        surface.blit(lbl, (int(nx - lbl.get_width() // 2), int(ny - node_radius - 16)))
+
+    # ── Info panel ──
+    info_y = circle_y + circle_diam + 6
+    if ref is not None:
+        rf = fonts['xs'].render(f"REF: G{ref[0]}", True, (200, 200, 200))
+        surface.blit(rf, (content_x + 12, info_y))
+        if target is not None:
+            tgt_h = v_hue(SEM[target[0]][3]); tc = _hsl(tgt_h, 100, 50)
+            tf = fonts['xs'].render(f"TARGET: G{target[0]}", True, tc)
+            surface.blit(tf, (content_x + content_w // 2 + 12, info_y))
+            if step == 0:
+                desc = "Octave (same class)"
+            elif step == 6:
+                desc = "6 Midpoint (-R)" if sign == '-R' else "6 Midpoint"
+            else:
+                sn = _STEP_NAMES.get(step, f"±{step}")
+                parts = sn.split(' ', 1)
+                desc = f"{sign}{step} {parts[1]}" if len(parts) > 1 else f"{sign}{step} {sn}"
+            df = fonts['xs'].render(desc, True, (160, 160, 160))
+            ctr_x = content_x + content_w // 2
+            surface.blit(df, (ctr_x - df.get_width() // 2, info_y + 18))
+            sw_s = 12
+            sw_x = ctr_x + df.get_width() // 2 + 8; sw_y = info_y + 21
+            sw_rel_class = step if sign == '+' else (12 - step) % 12
+            sc = _hsl(v_hue(SEM[sw_rel_class][3]), 100, 50)
+            pygame.draw.rect(surface, sc, (sw_x, sw_y, sw_s, sw_s), border_radius=2)
+            pygame.draw.rect(surface, (180, 180, 180), (sw_x, sw_y, sw_s, sw_s), 1, border_radius=2)
+        else:
+            df = fonts['xs'].render("Octave (same class)", True, (120, 120, 120))
+            surface.blit(df, (content_x + content_w // 2 - df.get_width() // 2, info_y + 8))
+    else:
+        idle = fonts['sm'].render("play a note...", True, (50, 50, 50))
+        surface.blit(idle, (circle_cx - idle.get_width() // 2, circle_cy - 8))

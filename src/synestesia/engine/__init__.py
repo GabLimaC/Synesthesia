@@ -26,6 +26,7 @@ from .core import (
     draw_piano_roll_sub_tabs, draw_piano_roll_nodes,
     draw_piano_roll_relations,
     draw_flow_sub_tabs, draw_flow_relations,
+    draw_keyboard_relation,
     FLOW_REL_LABELS,
     # scale mode definitions
     _SCALE_MODES,

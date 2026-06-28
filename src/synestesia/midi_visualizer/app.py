@@ -5,7 +5,7 @@ Liminal Flow Intonation color system.
 
 Controls:
   TAB    → toggle side menu
-  V      → switch view (Flow / Piano Roll)
+  V      → switch view (Flow / Piano Roll / Keyboard)
   ESC    → quit
 """
 
@@ -17,11 +17,12 @@ from ..engine import (
     draw_view_tabs, draw_piano_roll, draw_piano_roll_sub_tabs, draw_piano_roll_nodes,
     draw_piano_roll_relations,
     draw_flow_sub_tabs, draw_flow_relations,
+    draw_keyboard_relation,
     PIANO_MIDI_MIN, PIANO_MIDI_MAX, PIANO_NOTE_COUNT,
     SQUARE_ROW_H, VIEW_TAB_H, SUB_TAB_H, NODE_RADIUS, MENU_W,
     _SCALE_MODES,
 )
-from ..engine.core import _CLASS_TO_LINEAR_POS
+from ..engine.core import _CLASS_TO_LINEAR_POS, FLOW_REL_LABELS
 
 # ────
 # MUTABLE SETTINGS
@@ -234,6 +235,11 @@ def main():
     flow_sub = 0        # 0 = note color, 1 = relation color
     flow_rel_state = {'ref': None, 'target': None, 'step': 0, 'sign': '', 'fade_alpha': 0.0}
 
+    # Keyboard relation view state
+    KEYBOARD_TAB = 2
+    keyboard_ref_class = None       # G-class (0-11) of current reference
+    keyboard_prev_ref_class = None  # G-class of previous different reference
+
     print("TAB = menu  |  V = view  |  K = chords  |  S = circle seq  |  L = scale  |  [/] = mode  |  ESC = quit")
 
     running = True
@@ -247,7 +253,7 @@ def main():
                 elif event.key == pygame.K_TAB:
                     menu.toggle()
                 elif event.key == pygame.K_v:
-                    view_tab = 1 - view_tab
+                    view_tab = (view_tab + 1) % 3
                     trail_columns.clear()
                     node_trail.clear()
                 elif event.key == pygame.K_k:
@@ -271,7 +277,10 @@ def main():
                 # Click on view tab bar
                 if my < VIEW_TAB_H and mx >= cx0:
                     rel = mx - cx0
-                    view_tab = 0 if rel < cw0 // 2 else 1
+                    tw = cw0 // 3
+                    if rel < tw: view_tab = 0
+                    elif rel < tw * 2: view_tab = 1
+                    else: view_tab = 2
                     trail_columns.clear()
                     node_trail.clear()
                 # Click on flow sub-tab bar
@@ -381,6 +390,14 @@ def main():
                             alpha=0.0, held=True, echo_timer=None,
                         )
 
+                    # ── keyboard relation tracking ──
+                    if keyboard_ref_class is None:
+                        keyboard_ref_class = g_class
+                    elif g_class != keyboard_ref_class:
+                        keyboard_prev_ref_class = keyboard_ref_class
+                        keyboard_ref_class = g_class
+                    # else: same G-class, ref doesn't change
+
                     # ── flow relations tracking ──
                     if view_tab == 0 and flow_sub == 1:
                         cp = _CLASS_TO_LINEAR_POS[g_class]
@@ -397,25 +414,26 @@ def main():
                             flow_rel_state['sign'] = ''
                             flow_rel_state['fade_alpha'] = 0.0
                         else:
-                            # ref = prev note, target = latest note
-                            if flow_rel_state['target'] is not None:
-                                flow_rel_state['ref'] = flow_rel_state['target']
-                            flow_rel_state['target'] = new_entry
+                            # Compute relation from current ref to new note
                             rg = flow_rel_state['ref'][0]
-                            tg = flow_rel_state['target'][0]
+                            tg = new_entry[0]
                             gen_dist = (tg - rg) % 12
-                            if gen_dist == 0:
-                                flow_rel_state['step'] = 0
-                                flow_rel_state['sign'] = ''
-                            elif gen_dist == 6:
-                                flow_rel_state['step'] = 6
-                                flow_rel_state['sign'] = '-R'
-                            elif gen_dist < 6:
-                                flow_rel_state['step'] = gen_dist
-                                flow_rel_state['sign'] = '+'
+                            step = gen_dist if gen_dist <= 6 else 12 - gen_dist
+                            ref_lin = _CLASS_TO_LINEAR_POS[rg]
+                            tg_lin = _CLASS_TO_LINEAR_POS[tg]
+                            lin_dist = (tg_lin - ref_lin) % 12
+                            label = FLOW_REL_LABELS[lin_dist]
+                            if label == "1 (R)":
+                                sign = ''; step = 0
+                            elif label == "-R":
+                                sign = '-R'; step = 6
                             else:
-                                flow_rel_state['step'] = 12 - gen_dist
-                                flow_rel_state['sign'] = '-'
+                                sign = label[0]; step = int(label[1:])
+                            # Shift: prev ref becomes target, new note becomes ref
+                            flow_rel_state['target'] = flow_rel_state['ref']
+                            flow_rel_state['ref'] = new_entry
+                            flow_rel_state['step'] = step
+                            flow_rel_state['sign'] = sign
                             flow_rel_state['fade_alpha'] = 0.0
 
                     if view_tab == 1 and piano_roll_sub == 1:
@@ -588,7 +606,7 @@ def main():
                     content_x, content_w, W, H, BG)
             draw_flow_sub_tabs(screen, fonts, content_x, content_w, flow_sub)
 
-        else:
+        elif view_tab == 1:
             # ── VIEW 1: Piano Roll view ────
             if piano_roll_sub == 0:
                 draw_piano_roll(screen, fonts, note_states, trail_columns,
@@ -610,6 +628,12 @@ def main():
                     palette_pick=settings.get("palette_pick"))
             # Sub-tab bar (drawn on top of trail area)
             draw_piano_roll_sub_tabs(screen, fonts, content_x, content_w, piano_roll_sub)
+
+        elif view_tab == 2:
+            # ── VIEW 2: Keyboard Relation view ────
+            draw_keyboard_relation(screen, fonts,
+                keyboard_ref_class, keyboard_prev_ref_class,
+                note_states, content_x, content_w, W, H, BG)
 
         # ── View tab bar (drawn on top, above content) ────
         draw_view_tabs(screen, fonts, content_x, content_w, view_tab)

@@ -45,11 +45,7 @@ synestesia/
 └── AGENTS.md
 ```
 
-### Legacy files (project root)
 
-The original flat scripts (`engine.py`, `composer.py`, `composer_live.py`,
-`synestv2.py`, `synesthesia.py`) remain at the root for reference. The
-canonical source of truth is `src/synestesia/`.
 
 ### Running
 
@@ -67,7 +63,7 @@ note names (C, D, E, …). They are labels for positions in a self-contained
 generative sequence.
 
 `LFI_DATA` is a list of 12 tuples `(chromatic_semitone, name, base_freq, v_value)`
-**ordered by ascending frequency** (the LINEAR sequence), not by chromatic semitone:
+**ordered by ascending frequency** (the LINEAR sequence)
 
 | Index | Entry | v_value | hue    | Description |
 |-------|-------|--------:|-------:|-------------|
@@ -89,7 +85,7 @@ chromatic semitone) for lookup by semitone. Index into `LFI_DATA` only by
 LINEAR position (0 = G0, 1 = G7, 2 = G2, …).
 
 The LINEAR sequence (frequency-ascending order):
-`G0 → G7 → G2 → G9 → G4 → G11 → G6 → G1 → G8 → G3 → G10 → G5`
+`G0 → G7 → G2 → G9 → G4 → G11 → G6 → G1 → G8 → G3 → G10 → G5 → G0`
 
 ### Chromatic to LFI G-class mapping
 
@@ -121,11 +117,10 @@ reduction to keep ratios within [1, 2)) produces the 12 distinct classes.
 This is a **frequency-agnostic** mathematical system; it does not depend on any
 external tuning standard.
 
-The generative sequence, when laid out as frequency ratios inside one octave,
-produces the **Generative sequence**:
+This is the **Generative sequence**. Contrary to the **Linear sequence**, we do not sort this sequence by ascending numerical value, so this is simply the sequence of values produced by applying the generative step repeatedly and normalizing the value inside an octave (modulation mod12). :
 `G0 → G1 → G2 → G3 → G4 → G5 → G6 → G7 → G8 → G9 → G10 → G11`
 
-And when normalized to the range of one octave and ordered numerically, it produces the LINEAR SEQUENCE:
+And when this sequence is ordered numerically, it produces the LINEAR SEQUENCE, and is the manifestation of the modulation results:
 
 `G0 → G7 → G2 → G9 → G4 → G11 → G6 → G1 → G8 → G3 → G10 → G5`
 
@@ -140,7 +135,7 @@ opposite of the root.
 
 In Western terminology this interval is called the tritone. That label is
 **forbidden** in this project; describe it only as the structural midpoint or
-logarithmic opposite of G0.
+logarithmic opposite of G0, or simply G6.
 
 ### Color mapping — sound to light
 
@@ -160,7 +155,9 @@ hue(r) = (240° + 360° × log₂(r)) mod 360°
 ```
 
 Notes:
-- Anchor 240° = pure bright Blue (G0).
+- Anchor 240° = pure bright Blue (G0) simply by convenience. Any color can be used as the anchor, as it represents a frequency in a frequency-agnostic system. 
+- When we pick blue as our anchor, we are using the RELATIVE colors (compatible with the western convenience C ≃ 261.63 hz as blue).
+- We can also assign any color to this. When we assign blue = 20hz (and octaves), we are using the CANONICAL colors. When we are choosing some different mapping (such as selected by user), we are using CUSTOM colors
 - Use HSL(hue, 1.0, 0.5) → convert to sRGB for display (S=1, L=0.5 preserves perceptual purity).
 - Compute logs in double precision and avoid quantizing hue unless explicitly required.
 
@@ -216,20 +213,331 @@ Implementation note: apply an operator to the numeric ratio, then reduce to [1,2
 
 ...and so on.
 
+
+
+## LFI color-combination layer — positional color disc
+
+This section defines a separate visual/theoretical layer for combining
+already-generated LFI colors. It does **not** replace the canonical
+sound-to-light mapping. Individual G-class colors must still be derived from the
+LFI hue system described above. Once those note colors exist as concrete sRGB
+tuples, combinations between them are read from a **positional color disc**.
+
+### Concept
+
+Each G-class is a colored point on the perimeter of the LFI circle, placed at
+one of 12 equal 30° angular slots (the regular 12-gon). A selected cluster is a
+set of two or more points. The visualizer draws relations between the selected
+points and generates new colors from those relations.
+
+The combination color of any set of notes is a **pure function of where their
+combined geometric point sits on the wheel**:
+
+- Combining N notes = the geometric center of their rim points (midpoint for 2,
+  polygon centroid for 3+). This is the same centroid the visualizer already
+  draws.
+- The combination **color is read from a color disc at that interior point**.
+
+Because the color depends only on the position of the combined point, **any two
+bodies that share a centroid share a color by construction** — this is the
+defining property of this layer.
+
+There are two distinct color levels:
+
+1. **1-1 relation color**
+   - For every pair of selected G-classes, read the disc color at the exact
+     midpoint of the chord between the two rim points.
+   - Draw the line between those two points using that pair color.
+   - Place a small generated-color circle at the midpoint.
+
+2. **Cluster internal color**
+   - For the full selected cluster, read the disc color at the polygon centroid
+     of all selected rim points.
+   - Use this color as the internal fill color of the selected polygon or shape.
+   - Place a generated-color circle at the centroid.
+
+This makes the visualizer show both the pairwise internal relations and the
+total compound color of the selected body.
+
+### The color disc
+
+The disc is centered on the wheel center and has the same rim radius `R` as the
+12 equal slots.
+
+- **Angle → hue.** Hue varies with the point's angle from the wheel center. At
+  any angle, interpolate between the two bracketing rim slots' LFI hues using
+  shortest-arc blending (the `_lfi_lerp` idiom). A point exactly on a rim node
+  reads that node's exact LFI hue.
+  - Hue-by-slot is **not** equally spaced (Pythagorean pattern). Therefore the
+    geometric angle must be mapped to hue via the rim nodes' actual LFI hues,
+    never via raw angle.
+  - Hue source is `ColorState.hue_of(_LINEAR_CHROM[slot])`, read live so both
+    standard and custom palettes are supported with no snapshotting.
+- **Radius → saturation/lightness.** `t = distance_from_center / R`. Color =
+  `HSL(hue, 100%·t, 50%)`. Rim (`t = 1`) = full LFI color; center (`t = 0`) =
+  mid-gray (`_hsl` returns gray when `s == 0`).
+
+Reference implementation (`_disc_color` in `theory_explorator/app.py`):
+
+```python
+def _disc_color(point, cx, cy, R, cs):
+    dx, dy = point[0] - cx, point[1] - cy
+    d = math.hypot(dx, dy)
+    t = max(0.0, min(1.0, d / R)) if R > 0 else 0.0
+    if t < 1e-6:
+        return _hsl(0.0, 0.0, 50.0)          # center => gray
+    ang = (math.degrees(math.atan2(dy, dx)) + 90.0) % 360.0   # 0 at slot 0
+    slot_f = ang / 30.0
+    s0 = int(slot_f) % 12
+    s1 = (s0 + 1) % 12
+    frac = slot_f - int(slot_f)
+    h0 = cs.hue_of(_LINEAR_CHROM[s0])
+    h1 = cs.hue_of(_LINEAR_CHROM[s1])
+    diff = ((h1 - h0 + 180.0) % 360.0) - 180.0   # shortest arc
+    hue = (h0 + diff * frac) % 360.0
+    return _hsl(hue, 100.0 * t, 50.0)
+```
+
+The `+90°` offset and `/30°` slotting encode the same angle convention as
+`_circle_point` (`-pi/2 + 2*pi*i/12`, slot 0 at top). The rim invariant is the
+key correctness check:
+
+```python
+_disc_color(_circle_point(i, cx, cy, R), cx, cy, R, cs) == cs.color(_LINEAR_CHROM[i])
+```
+
+(within rounding) for all 12 slots, under both standard and custom palettes.
+
+### Resulting properties
+
+- Point on a node ⇒ that node's exact LFI color (consistency preserved).
+- Pair midpoint ⇒ blend of just those two, muted by how far inward the chord
+  midpoint sits.
+- **Same centroid ⇒ same color** (the goal).
+- Center-symmetric bodies (centroid at the wheel center, e.g. step-6 or full
+  rings) ⇒ neutral gray.
+- Interior points have `t < 1`, so combination colors are generally **less
+  saturated** than the rim notes. This muting is intended, not a regression.
+
+### Generated-color objects
+
+The visualizer should internally represent each generated color as a small object so it can be drawn, listed, exported, and tested.
+
+Recommended structure:
+
+```python
+GeneratedColor = {
+    "kind": "pair" | "cluster",
+    "members": [linear_position_0, linear_position_1, ...],
+    "labels": ["G0", "G7", ...],
+    "rgb": (r, g, b),
+    "hex": "#rrggbb",
+    "point": (x, y),
+}
+```
+
+Rules:
+
+- `kind == "pair"` means the generated color belongs to a 1-1 relation.
+- `kind == "cluster"` means the generated color belongs to the whole selected body.
+- `members` must use LINEAR circle positions, not chromatic keyboard positions.
+- `labels` should be displayed in the current LFI labels, never Western note names.
+- `point` is where the generated-color circle is drawn.
+
+### Geometry rules
+
+The LFI circle should use 12 equal angular slots. The currently preferred order for the visual cluster tool is the LINEAR sequence:
+
+`G0 → G7 → G2 → G9 → G4 → G11 → G6 → G1 → G8 → G3 → G10 → G5 → G0`
+
+For each selected G-class, compute a perimeter point:
+
+```python
+angle = -pi / 2 + 2 * pi * linear_position / 12
+x = cx + cos(angle) * radius
+y = cy + sin(angle) * radius
+```
+
+#### Pair midpoint
+
+For every selected pair `(a, b)`, draw the line from point `a` to point `b`. The generated pair color circle is placed at:
+
+```python
+mx = (ax + bx) / 2
+my = (ay + by) / 2
+```
+
+#### Cluster centroid
+
+For the full selected cluster:
+
+- If one point is selected, the centroid is the point itself.
+- If two points are selected, the centroid is the midpoint of the line.
+- If three or more points are selected, the centroid should represent the selected polygon/body.
+
+For three or more selected points, the preferred centroid is the polygon centroid when the points form a non-degenerate polygon. Sort selected points by their circle order before computing it.
+
+Polygon centroid formula:
+
+```python
+A2 = 0
+Cx = 0
+Cy = 0
+for each edge p[i] -> p[j]:
+    cross = x[i] * y[j] - x[j] * y[i]
+    A2 += cross
+    Cx += (x[i] + x[j]) * cross
+    Cy += (y[i] + y[j]) * cross
+A = A2 / 2
+centroid = (Cx / (6 * A), Cy / (6 * A))
+```
+
+If the polygon area is almost zero, fall back to the arithmetic mean of selected point coordinates.
+
+### Listing all selected and generated colors
+
+The visualizer must show a live list containing:
+
+1. **Selected source colors**
+   - One row per selected G-class.
+   - Show label, RGB, hex, and a small swatch.
+
+2. **Generated pair colors**
+   - One row for every possible 1-1 relation inside the selected cluster.
+   - For `n` selected notes, there are `n * (n - 1) / 2` pair colors.
+   - Show relation label, e.g. `G0 + G7`, RGB, hex, and a small swatch.
+
+3. **Generated cluster color**
+   - One row for the full selected cluster.
+   - Show all labels, RGB, hex, and a larger or emphasized swatch.
+
+The list must update immediately whenever selection changes.
+
+### Drawing behavior
+
+When the user selects multiple G-classes:
+
+- Selected source nodes should be visually emphasized with a brighter or thicker outline.
+- Every selected pair should draw a line between the two nodes.
+- Each pair line should be colored by that pair's disc color (read at the chord midpoint).
+- Each pair line should have a small generated-color circle exactly at its midpoint.
+- If at least three G-classes are selected, draw the polygon/body connecting selected points in circle order.
+- The polygon/body fill should use the cluster internal color: the disc color read at the polygon centroid.
+- The polygon/body stroke may be the cluster color or a neutral outline, but pairwise relation lines should remain visible.
+- Draw a cluster generated-color circle at the polygon centroid.
+- The cluster generated-color circle should be visually distinct from pair midpoint circles, for example slightly larger or with a stronger outline.
+
+Recommended sizes:
+
+```python
+source_node_radius = 9
+selected_node_radius = 13
+pair_generated_radius = 5
+cluster_generated_radius = 8
+line_width = 2
+polygon_alpha = 0.25 to 0.35
+```
+
+### Interaction requirements
+
+The tool should support:
+
+- Click a node to toggle its selection.
+- Clear selection button.
+- Fixed-step body buttons: Step 1 through Step 6.
+- Optional export/copy list of generated colors.
+- Optional hover labels over generated-color circles.
+
+Fixed-step body behavior:
+
+```python
+selected.clear()
+i = 0
+do:
+    selected.add(i)
+    i = (i + step) % 12
+while i != 0
+```
+
+This creates recurring bodies from the LINEAR circle positions. Step 6 creates the structural opposite pair. Symmetrical bodies (centroid at or near the wheel center) produce neutral or muted disc colors by construction.
+
+### Pygame implementation notes for `theory_explorator/app.py`
+
+The combination layer lives inside `theory_explorator/app.py` as two modules:
+
+- `RGBClusterMixer` (Module 4)
+- `RelationMap` (Module 5)
+
+Both share the single `_disc_color(point, cx, cy, R, cs)` helper, passing their
+own `_circle_center_radius()` so a point on slot `i` reads that slot's exact
+LFI color in either module.
+
+Suggested helper functions:
+
+```python
+def rgb_hex(c):
+    return "#%02x%02x%02x" % c
+
+def circle_point(i, cx, cy, r):
+    a = -math.pi / 2 + 2 * math.pi * i / 12
+    return cx + math.cos(a) * r, cy + math.sin(a) * r
+
+def pair_generated(a, b, points, cx, cy, R, cs):
+    ax, ay = points[a]; bx, by = points[b]
+    point = ((ax + bx) / 2, (ay + by) / 2)
+    color = _disc_color(point, cx, cy, R, cs)
+    return {"kind": "pair", "members": [a, b], "rgb": color, "point": point}
+
+def cluster_generated(selected, points, cx, cy, R, cs):
+    ordered = sorted(selected)
+    point = polygon_or_mean_centroid([points[i] for i in ordered])
+    color = _disc_color(point, cx, cy, R, cs)
+    return {"kind": "cluster", "members": ordered, "rgb": color, "point": point}
+```
+
+Rendering order should be:
+
+1. Base circle and unselected source nodes.
+2. Polygon fill using cluster color, if at least three points are selected.
+3. Pair relation lines using pair colors.
+4. Pair generated-color midpoint circles.
+5. Cluster generated-color centroid circle.
+6. Selected source nodes and labels on top.
+7. Side/bottom list of selected and generated colors.
+
+### Important distinction from canonical LFI color generation
+
+The canonical note colors are still generated from the LFI sound-to-light
+system. The positional color disc only applies after those source colors already
+exist. Therefore:
+
+- Correct: derive the 12 G-class colors from LFI hue, place them on the rim, then
+  read combination colors from the disc at the combined point.
+- Incorrect: use the disc or any blending to derive the original 12 G-class
+  colors. The source palette is always hue-derived and is NEVER RGB-interpolated.
+- Correct: pair and cluster colors are visual relation artifacts.
+- Incorrect: pair and cluster colors are new base G-classes.
+
+The earlier equal-part RGB-average combination rule is retired. RGB interpolation
+remains forbidden for deriving the LFI palette itself; combination colors are now
+defined exclusively by the positional color disc, whose hue still rides the LFI
+hue circle (shortest-arc interpolation between bracketing rim slots) rather than
+mixing RGB channels.
+
 ### Frequency reference ("canonical" values)
 
-When a base frequency is needed, the **canonical reference** is:
+The befored mentioned **canonical values reference** is:
 
 - **G0 = 20 Hz** (minimum)
 - **Maximum G0 in the system = 20 480 Hz** (10 natural octaves above the base)
-
-These are power-of-two bounds. The word **"canonical"** is acceptable when it
+These values are very approximate to the minimum and maximum frequencies typically perceived by human auditory senses
+These are also power-of-two bounds. The word **"canonical"** is acceptable when it
 refers specifically to this base-frequency convention. It is a technical term
 of the project, not a forbidden word.
 
 In practice the code uses `F_BASE = 40.0 Hz` and `F_TOP = 10240.0 Hz` for
 real-world instrument compatibility; the canonical values remain the theoretical
-reference frame.
+reference frame, but not the standard presentation in the project due to incompatibility with the world's conventions.
 
 ### MIDI compatibility convention
 
@@ -377,5 +685,8 @@ Never leave tkinter roots alive during the pygame loop.
      step relationships (±1 through 6), six detail cards below, fade animations.
 - Uses its own `mk_freq_sound(freq, ...)` based on `FREQ_BASE = 320.0 Hz`
   (not MIDI note frequencies).
-- `_lfi_lerp(h0, h1, t)` is the **only** permitted hue-blending helper;
-  never blend LFI colours in RGB space.
+- `_lfi_lerp(h0, h1, t)` is the permitted hue-blending helper for canonical palette/spectrum work.
+- The RGB Cluster Mixer (Module 4) and Relation Map (Module 5) derive their
+  combination colors from the shared `_disc_color(point, cx, cy, R, cs)` helper
+  (the positional color disc described in the color-combination layer), NOT from
+  RGB averaging.

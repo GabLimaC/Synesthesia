@@ -254,19 +254,21 @@ def draw_rounded(surf, color, rect, r):
 
 
 def draw_view_tabs(surface, fonts, content_x, content_w, view_tab):
-    """Draw the two-tab selector (FLOW / PIANO ROLL) at the top of the content area."""
-    tab_labels = ["FLOW", "PIANO ROLL"]
-    tab_w = content_w // 2
+    """Draw the three-tab selector (FLOW / PIANO ROLL / KEYBOARD) at the top of the content area."""
+    tab_labels = ["FLOW", "PIANO ROLL", "KEYBOARD"]
+    tab_count = len(tab_labels)
+    tab_w = content_w // tab_count
     for i, label in enumerate(tab_labels):
         tx = content_x + i * tab_w
+        actual_w = tab_w if i < tab_count - 1 else content_w - i * tab_w
         active = (view_tab == i)
         bg  = (30, 30, 50) if active else (14, 14, 14)
         fg  = (180, 200, 255) if active else (70, 70, 70)
         border = (60, 80, 160) if active else (35, 35, 35)
-        pygame.draw.rect(surface, bg, (tx, 0, tab_w, VIEW_TAB_H))
-        pygame.draw.rect(surface, border, (tx, 0, tab_w, VIEW_TAB_H), 1)
+        pygame.draw.rect(surface, bg, (tx, 0, actual_w, VIEW_TAB_H))
+        pygame.draw.rect(surface, border, (tx, 0, actual_w, VIEW_TAB_H), 1)
         lbl = fonts['xs'].render(label, True, fg)
-        surface.blit(lbl, (tx + tab_w // 2 - lbl.get_width() // 2,
+        surface.blit(lbl, (tx + actual_w // 2 - lbl.get_width() // 2,
                     VIEW_TAB_H // 2 - lbl.get_height() // 2))
     hint = fonts['xs'].render("[V]", True, (40, 40, 40))
     surface.blit(hint, (content_x + content_w - hint.get_width() - 6,
@@ -468,7 +470,7 @@ _STEP_STYLES = {1: 'double', 2: 'dotdash', 3: 'longdash',
 _STEP_COLORS = {1: (0, 217, 255), 2: (255, 128, 255), 3: (255, 230, 0),
                 4: (0, 230, 60), 5: (255, 150, 0), 6: (255, 50, 60)}
 
-FLOW_REL_LABELS = ["1 (R)", "-5", "+2", "-3", "+4", "+1", "-R", "-1", "-4", "+3", "-2", "+5"]
+FLOW_REL_LABELS = ["1 (R)", "-5", "+2", "-3", "+4", "-1", "-R", "+1", "-4", "+3", "-2", "+5"]
 
 
 def _lfi_lerp(h0, h1, t):
@@ -1730,25 +1732,30 @@ def draw_flow_relations(surface, fonts, flow_rel_state, note_states,
             pygame.draw.polygon(shape_surf, (*hx_color, a180), tri_b, sw)
 
         elif step == 5 and len(vertices) == 12:
-            # 12-gon decomposition: all constituent sub-shapes
+            # ── 12-gon decomposition ──
+            # hexagons (step 2) and triangles (step 4): opposite of parent sign
+            # squares (step 3): same as parent sign
+            inv_sign = '-' if sign == '+' else '+'
             a180 = int(180 * fade_alpha); sw = 2
-            sr = lambda ss, sgn: _hsl(v_hue(SEM[ss if sgn == '+' else (12 - ss) % 12][3]), 100, 50)
-            # 2 hexagons (step 2)
-            c2 = sr(2, sign)
+            # 2 hexagons (step 2, opposite sign)
+            hx_rel = 2 if inv_sign == '+' else (12 - 2) % 12
+            c2 = _hsl(v_hue(SEM[hx_rel][3]), 100, 50)
             hex_a = [lpts[i] for i in (0, 2, 4, 6, 8, 10)]
             hex_b = [lpts[i] for i in (1, 3, 5, 7, 9, 11)]
             pygame.draw.polygon(shape_surf, (*c2, a180), hex_a, sw)
             pygame.draw.polygon(shape_surf, (*c2, a180), hex_b, sw)
-            # 3 squares (step 3, inherit parent sign)
-            c3 = sr(3, sign)
+            # 3 squares (step 3, parent sign)
+            sq_rel = 3 if sign == '+' else (12 - 3) % 12
+            c3 = _hsl(v_hue(SEM[sq_rel][3]), 100, 50)
             sq0 = [lpts[i] for i in (0, 3, 6, 9)]
             sq1 = [lpts[i] for i in (1, 4, 7, 10)]
             sq2 = [lpts[i] for i in (2, 5, 8, 11)]
             pygame.draw.polygon(shape_surf, (*c3, a180), sq0, sw)
             pygame.draw.polygon(shape_surf, (*c3, a180), sq1, sw)
             pygame.draw.polygon(shape_surf, (*c3, a180), sq2, sw)
-            # 4 triangles (step 4, inherit parent sign)
-            c4 = sr(4, sign)
+            # 4 triangles (step 4, opposite sign)
+            tr_rel = 4 if inv_sign == '+' else (12 - 4) % 12
+            c4 = _hsl(v_hue(SEM[tr_rel][3]), 100, 50)
             tri0 = [lpts[i] for i in (0, 4, 8)]
             tri1 = [lpts[i] for i in (1, 5, 9)]
             tri2 = [lpts[i] for i in (2, 6, 10)]
@@ -1757,9 +1764,6 @@ def draw_flow_relations(surface, fonts, flow_rel_state, note_states,
             pygame.draw.polygon(shape_surf, (*c4, a180), tri1, sw)
             pygame.draw.polygon(shape_surf, (*c4, a180), tri2, sw)
             pygame.draw.polygon(shape_surf, (*c4, a180), tri3, sw)
-            # 1 starburst (step 1, inherit parent sign)
-            c1_sr = sr(1, sign)
-            pygame.draw.polygon(shape_surf, (*c1_sr, a180), lpts, sw)
 
         # Edges
         for i in range(len(vertices)):
@@ -1775,9 +1779,9 @@ def draw_flow_relations(surface, fonts, flow_rel_state, note_states,
                     (lx0, ly0), (lx1, ly1), w + 2)
             pygame.draw.line(shape_surf, (*ec, ea), (lx0, ly0), (lx1, ly1), w)
             if is_chord:
-                # Arrow from ref toward target
-                if ca == ref[0]: sx, sy = lx0, ly0; ex, ey = lx1, ly1
-                else:            sx, sy = lx1, ly1; ex, ey = lx0, ly0
+                # Arrow toward ref (from target to ref)
+                if ca == ref[0]: sx, sy = lx1, ly1; ex, ey = lx0, ly0
+                else:            sx, sy = lx0, ly0; ex, ey = lx1, ly1
                 dx = ex - sx; dy = ey - sy
                 length = _m.sqrt(dx * dx + dy * dy)
                 if length > 0:
@@ -1868,3 +1872,386 @@ def draw_flow_relations(surface, fonts, flow_rel_state, note_states,
     else:
         idle = fonts['sm'].render("play a note...", True, (50, 50, 50))
         surface.blit(idle, (circle_cx - idle.get_width() // 2, circle_cy - 8))
+
+
+# ── keyboard relation view ──────────────────
+WHITE_CHROMATIC = {0: 0, 2: 1, 4: 2, 5: 3, 7: 4, 9: 5, 11: 6}
+BLACK_BOUNDARY  = {1: 1.0, 3: 2.0, 6: 4.0, 8: 5.0, 10: 6.0}
+KB_MIDI_MIN = 48; KB_MIDI_MAX = 71
+KB_KEY_COUNT = KB_MIDI_MAX - KB_MIDI_MIN + 1
+WHITES_PER_OCT = 7
+
+
+def _step_relation_color(step, sign):
+    rel_class = step if sign == '+' else (12 - step) % 12
+    return _hsl(v_hue(SEM[rel_class][3]), 100, 50)
+
+
+def _draw_mini_shape(surf, cx, cy, size, step, sign, color):
+    """Mini shape drawn as crisp line segments — star connects every 5th vertex."""
+    col = (18, 18, 20); lw = max(2, size // 12)
+    cx_i = int(cx); cy_i = int(cy); r = size / 2
+    if step == 0:
+        rr = int(r)
+        pygame.draw.circle(surf, col, (cx_i, cy_i), rr, lw)
+        return
+    if step == 6:
+        h = int(r * 0.9)
+        pygame.draw.line(surf, col, (cx_i, cy_i - h), (cx_i, cy_i + h), lw)
+        return
+    n = 12 // math.gcd(step, 12)
+    verts = [(cx + r * math.cos(-math.pi / 2 + 2 * math.pi * i / n),
+              cy + r * math.sin(-math.pi / 2 + 2 * math.pi * i / n)) for i in range(n)]
+    if step == 1:
+        k = 5; slw = max(1, size // 18)
+        for i in range(n):
+            a = verts[i]; b = verts[(i + k) % n]
+            pygame.draw.line(surf, col, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), slw)
+        return
+    for i in range(n):
+        a = verts[i]; b = verts[(i + 1) % n]
+        pygame.draw.line(surf, col, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), lw)
+
+
+def draw_keyboard_relation(surface, fonts, keyboard_ref_class, keyboard_prev_ref_class,
+                           note_states, content_x, content_w, W, H, bg):
+    """Keyboard relation view: top shape visualizer + bottom 2-octave piano keyboard."""
+    import math as _m
+    area_top = VIEW_TAB_H
+    margin = 6
+
+    free_h = H - area_top - margin * 2 - 18
+    shape_h = int(free_h * 0.50)
+    kbd_h = int(free_h * 0.38)
+
+    shape_y = area_top + margin + 16
+    kbd_top = shape_y + shape_h + margin
+    kbd_pad = 3
+
+    # ── Relation step computation ──
+    if keyboard_ref_class is not None and keyboard_prev_ref_class is not None \
+       and keyboard_ref_class != keyboard_prev_ref_class:
+        step, direction = _compute_generative_step(keyboard_prev_ref_class, keyboard_ref_class)
+        sign = '+' if direction == 'cw' else '-'
+    else:
+        step = 0; sign = ''; direction = 'same'
+
+    # ── Top title ──
+    title = fonts['xs'].render("RELATION SHAPE VISUALIZER", True, (120, 120, 130))
+    title_x = content_x + (content_w - title.get_width()) // 2
+    surface.blit(title, (title_x, shape_y - 16))
+
+    # ═══════════════════════════════════════════
+    # TOP: Shape Visualizer
+    # ═══════════════════════════════════════════
+    circle_diam = min(shape_h - 8, content_w - 60)
+    circle_x = content_x + (content_w - circle_diam) // 2
+    circle_y = shape_y + (shape_h - circle_diam) // 2
+    circle_cx = circle_x + circle_diam // 2
+    circle_cy = circle_y + circle_diam // 2
+    circle_r = circle_diam // 2 - 24
+    local_cx = circle_diam // 2
+
+    # Build node positions (LINEAR sequence, G0 at top)
+    node_positions = {}
+    node_radius = min(6, max(3, circle_r // 10))
+    for idx, cls in enumerate(_LINEAR_SEQ):
+        ang = -2 * _m.pi * idx / 12 - _m.pi / 2
+        nx = circle_cx - circle_r * _m.cos(ang)
+        ny = circle_cy + circle_r * _m.sin(ang)
+        node_positions[cls] = (nx, ny)
+
+    # Alpha overlay surface for shapes
+    shape_surf = pygame.Surface((circle_diam, circle_diam), pygame.SRCALPHA)
+
+    if step == 0:
+        blue_r = int(circle_r * 0.38)
+        pygame.draw.circle(shape_surf, (0, 0, 255, 140), (local_cx, local_cx), blue_r)
+        pygame.draw.circle(shape_surf, (255, 255, 255, 220), (local_cx, local_cx), blue_r, 3)
+
+    elif step == 6:
+        lc = _hsl(v_hue(SEM[6][3]), 100, 50)
+        if keyboard_ref_class is not None:
+            ref_lin = _CLASS_TO_LINEAR_POS[keyboard_ref_class]
+            opp_lin = (ref_lin + 6) % 12; opp_cls = _LINEAR_SEQ[opp_lin]
+            rx, ry = node_positions[keyboard_ref_class]; ox, oy = node_positions[opp_cls]
+            lrx, lry = rx - circle_x, ry - circle_y
+            lox, loy = ox - circle_x, oy - circle_y
+            pygame.draw.line(shape_surf, (*lc, 220), (int(lrx), int(lry)), (int(lox), int(loy)), 8)
+            pygame.draw.circle(shape_surf, (*lc, 255), (int(lrx), int(lry)), 5)
+            pygame.draw.circle(shape_surf, (*lc, 255), (int(lox), int(loy)), 5)
+
+    elif step >= 1:
+        ec = _step_relation_color(step, sign)
+        n_sides = 12 // _m.gcd(step, 12)
+        ref_cls = keyboard_prev_ref_class
+        vertices = [(ref_cls + i * step) % 12 for i in range(n_sides)]
+        lpts = [(int(node_positions[c][0] - circle_x), int(node_positions[c][1] - circle_y)) for c in vertices]
+
+        # Sub-shapes
+        a180 = 180; sw = 2
+        if step == 2 and n_sides == 6:
+            hx_rel = 4 if sign == '+' else (12 - 4) % 12
+            hx_color = _hsl(v_hue(SEM[hx_rel][3]), 100, 50)
+            tri_a = [lpts[i] for i in (0, 2, 4)]; tri_b = [lpts[i] for i in (1, 3, 5)]
+            pygame.draw.polygon(shape_surf, (*hx_color, a180), tri_a, sw)
+            pygame.draw.polygon(shape_surf, (*hx_color, a180), tri_b, sw)
+
+        elif step == 5 and n_sides == 12:
+            inv_sign = '-' if sign == '+' else '+'
+            hx_rel = 2 if inv_sign == '+' else (12 - 2) % 12
+            c2 = _hsl(v_hue(SEM[hx_rel][3]), 100, 50)
+            hex_a = [lpts[i] for i in (0, 2, 4, 6, 8, 10)]
+            hex_b = [lpts[i] for i in (1, 3, 5, 7, 9, 11)]
+            pygame.draw.polygon(shape_surf, (*c2, a180), hex_a, sw)
+            pygame.draw.polygon(shape_surf, (*c2, a180), hex_b, sw)
+            sq_rel = 3 if sign == '+' else (12 - 3) % 12
+            c3 = _hsl(v_hue(SEM[sq_rel][3]), 100, 50)
+            sq0 = [lpts[i] for i in (0, 3, 6, 9)]
+            sq1 = [lpts[i] for i in (1, 4, 7, 10)]
+            sq2 = [lpts[i] for i in (2, 5, 8, 11)]
+            pygame.draw.polygon(shape_surf, (*c3, a180), sq0, sw)
+            pygame.draw.polygon(shape_surf, (*c3, a180), sq1, sw)
+            pygame.draw.polygon(shape_surf, (*c3, a180), sq2, sw)
+            tr_rel = 4 if inv_sign == '+' else (12 - 4) % 12
+            c4 = _hsl(v_hue(SEM[tr_rel][3]), 100, 50)
+            tri0 = [lpts[i] for i in (0, 4, 8)]
+            tri1 = [lpts[i] for i in (1, 5, 9)]
+            tri2 = [lpts[i] for i in (2, 6, 10)]
+            tri3 = [lpts[i] for i in (3, 7, 11)]
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri0, sw)
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri1, sw)
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri2, sw)
+            pygame.draw.polygon(shape_surf, (*c4, a180), tri3, sw)
+
+        # Edges
+        for i_ in range(len(vertices)):
+            ca, cb = vertices[i_], vertices[(i_ + 1) % len(vertices)]
+            lax, lay = node_positions[ca]; lbx, lby = node_positions[cb]
+            lx0, ly0 = int(lax - circle_x), int(lay - circle_y)
+            lx1, ly1 = int(lbx - circle_x), int(lby - circle_y)
+            is_chord = {ca, cb} == {keyboard_prev_ref_class, keyboard_ref_class}
+            ea = 255 if is_chord else 200; w = 7 if is_chord else 5
+            if is_chord:
+                pygame.draw.line(shape_surf, (255, 255, 255, 255), (lx0, ly0), (lx1, ly1), w + 2)
+            pygame.draw.line(shape_surf, (*ec, ea), (lx0, ly0), (lx1, ly1), w)
+            if is_chord and step != 6:
+                if ca == keyboard_ref_class: sx, sy = lx1, ly1; ex, ey = lx0, ly0
+                else:                        sx, sy = lx0, ly0; ex, ey = lx1, ly1
+                dx = ex - sx; dy = ey - sy
+                length = _m.hypot(dx, dy)
+                if length > 0:
+                    ndx = dx / length; ndy = dy / length
+                    px = -ndy; py = ndx; ars = 12
+                    for frac in (0.35, 0.55, 0.75):
+                        ax = int(sx + ndx * length * frac); ay = int(sy + ndy * length * frac)
+                        bx_ = int(ax - ndx * ars); by_ = int(ay - ndy * ars)
+                        lx = bx_ + int(px * ars * 0.5); ly = by_ + int(py * ars * 0.5)
+                        rx = bx_ - int(px * ars * 0.5); ry = by_ - int(py * ars * 0.5)
+                        pygame.draw.polygon(shape_surf, (255, 255, 255, 255),
+                            [(ax, ay), (lx, ly), (rx, ry)])
+
+        # Ref vertex dot
+        if keyboard_prev_ref_class is not None:
+            rx, ry = node_positions[keyboard_prev_ref_class]
+            pygame.draw.circle(shape_surf, (*ec, 255), (int(rx - circle_x), int(ry - circle_y)), 5)
+
+    surface.blit(shape_surf, (circle_x, circle_y))
+
+    # ── Draw reference circle outline ──
+    pygame.draw.circle(surface, (50, 50, 60), (circle_cx, circle_cy), circle_r, 1)
+
+    # ── Draw 12 nodes on the circle ──
+    for idx, cls in enumerate(_LINEAR_SEQ):
+        nx, ny = node_positions[cls]
+        is_ref = (keyboard_ref_class is not None and keyboard_ref_class == cls)
+        is_prev = (keyboard_prev_ref_class is not None and keyboard_prev_ref_class == cls)
+        dot_col = (220, 220, 255) if is_ref else (60, 60, 70)
+        pygame.draw.circle(surface, dot_col, (int(nx), int(ny)), node_radius)
+        if is_ref:
+            pygame.draw.circle(surface, (255, 255, 255), (int(nx), int(ny)), node_radius + 3, 2)
+        if is_prev:
+            prev_hue = v_hue(SEM[cls][3]); prev_c = _hsl(prev_hue, 100, 50)
+            pygame.draw.circle(surface, prev_c, (int(nx), int(ny)), node_radius + 2, 2)
+
+    # ── Info text below shape ──
+    info_y = circle_y + circle_diam + 4
+    if keyboard_ref_class is not None:
+        rf = fonts['xs'].render(f"REF: G{keyboard_ref_class}", True, (200, 200, 200))
+        surface.blit(rf, (content_x + 12, info_y))
+        if keyboard_prev_ref_class is not None and keyboard_ref_class != keyboard_prev_ref_class:
+            pv_hue = v_hue(SEM[keyboard_prev_ref_class][3]); pv_c = _hsl(pv_hue, 100, 50)
+            pf = fonts['xs'].render(f"PREV: G{keyboard_prev_ref_class}", True, pv_c)
+            surface.blit(pf, (content_x + content_w // 2 + 12, info_y))
+            if step > 0:
+                sn = _STEP_NAMES.get(step, f"±{step}")
+                parts = sn.split(' ', 1)
+                desc = f"{sign}{step} {parts[1]}" if len(parts) > 1 else f"{sign}{step} {sn}"
+                dir_str = "→ CW" if direction == 'cw' else "← CCW"
+                df = fonts['xs'].render(f"{desc}  {dir_str}", True, (160, 160, 160))
+                ctr_x = content_x + content_w // 2
+                surface.blit(df, (ctr_x - df.get_width() // 2, info_y + 16))
+                sw_s = 12; sw_x = ctr_x + df.get_width() // 2 + 8; sw_y = info_y + 19
+                sc = _step_relation_color(step, sign)
+                pygame.draw.rect(surface, sc, (sw_x, sw_y, sw_s, sw_s), border_radius=2)
+                pygame.draw.rect(surface, (180, 180, 180), (sw_x, sw_y, sw_s, sw_s), 1, border_radius=2)
+        else:
+            df = fonts['xs'].render("Octave / Same class", True, (120, 120, 120))
+            surface.blit(df, (content_x + content_w // 2 - df.get_width() // 2, info_y + 8))
+    else:
+        idle = fonts['xs'].render("play a note...", True, (50, 50, 50))
+        surface.blit(idle, (circle_cx - idle.get_width() // 2, circle_cy - 8))
+
+    # ═══════════════════════════════════════════
+    # BOTTOM: Piano Keyboard
+    # ═══════════════════════════════════════════
+    kbd_pad_lr = 4
+    kbd_w = content_w - kbd_pad_lr * 2
+    kbd_x = content_x + kbd_pad_lr
+    kbd_y = kbd_top + kbd_pad
+
+    white_w = kbd_w / 14.0
+    black_w = white_w * 0.62
+    black_h = kbd_h * 0.56
+
+    # ── Gather held semitones for highlight ──
+    held_semitones = set()
+    for midi_note, ns in note_states.items():
+        if ns.get('held'):
+            held_semitones.add(midi_note % 12)
+
+    # ── Determine relation for each chromatic semitone ──
+    sem_rel = {}
+    ref_color = _hsl(240, 100, 50)
+    for chrom in range(12):
+        if keyboard_ref_class is None:
+            sem_rel[chrom] = (0, '', ref_color)
+        else:
+            g_class = _LINEAR_CHROMATIC_MAP[chrom]
+            if g_class == keyboard_ref_class:
+                sem_rel[chrom] = (0, '', ref_color)
+            else:
+                st, dir_ = _compute_generative_step(keyboard_ref_class, g_class)
+                sg = '+' if dir_ == 'cw' else '-'
+                sem_rel[chrom] = (st, sg, _step_relation_color(st, sg))
+
+    # ── Uniform shape size for both key colors ──
+    shape_size = max(18, min(30, int(black_w * 0.88)))
+    white_rects = []
+    for wi in range(14):
+        wx = kbd_x + wi * white_w
+        ww = max(1, int(white_w) - 1)
+        white_rects.append((wx, ww))
+
+    for midi in range(KB_MIDI_MIN, KB_MIDI_MAX + 1):
+        chrom = midi % 12
+        if chrom not in WHITE_CHROMATIC:
+            continue
+        wi = ((midi - KB_MIDI_MIN) // 12) * 7 + WHITE_CHROMATIC[chrom]
+        if wi >= len(white_rects):
+            continue
+        wx, ww = white_rects[wi]
+        wy = int(kbd_y); wh = int(kbd_h)
+
+        g_class = _LINEAR_CHROMATIC_MAP[chrom]
+        step_k, sign_k, rel_color = sem_rel[chrom]
+
+        is_ref = (keyboard_ref_class is not None and g_class == keyboard_ref_class)
+        is_pressed = chrom in held_semitones
+        is_tinted = (step_k > 0)
+
+        # Key body — light pastel tint for relations, white for plain keys
+        if is_ref:
+            key_fill = (0, 0, 255)
+        elif is_tinted:
+            rcl = step_k if sign_k == '+' else (12 - step_k) % 12
+            key_fill = _hsl(v_hue(SEM[rcl][3]), 100, 50)
+        else:
+            key_fill = (238, 238, 242)
+
+        pygame.draw.rect(surface, key_fill, (int(wx), wy, int(ww), wh))
+        pygame.draw.rect(surface, (65, 65, 70), (int(wx), wy, int(ww), wh), 1)
+
+        # Reference outline
+        if is_ref:
+            pygame.draw.rect(surface, (15, 15, 18), (int(wx), wy, int(ww), wh), 3)
+
+        # Pressed highlight
+        if is_pressed:
+            pygame.draw.rect(surface, (255, 120, 0), (int(wx), wy, int(ww), wh), 4)
+
+        # Step label at top, black
+        if ww >= 18:
+            if step_k > 0:
+                step_lbl_text = f"{sign_k}{step_k}"
+            elif is_ref:
+                step_lbl_text = "R"
+            else:
+                step_lbl_text = ""
+            st_lbl = fonts['xs'].render(step_lbl_text, True, (15, 15, 18))
+            st_x = int(wx + (ww - st_lbl.get_width()) / 2)
+            surface.blit(st_lbl, (st_x, wy + 3))
+
+            # Shape icon — centered in the space below black keys
+            shape_cy = wy + int(black_h) + (wh - int(black_h)) // 2
+            _draw_mini_shape(surface, wx + ww / 2, shape_cy, shape_size, step_k, sign_k, rel_color)
+
+    # ── Black keys ──
+    for midi in range(KB_MIDI_MIN, KB_MIDI_MAX + 1):
+        chrom = midi % 12
+        if chrom not in BLACK_BOUNDARY:
+            continue
+        octave = (midi - KB_MIDI_MIN) // 12
+        boundary = octave * WHITES_PER_OCT + BLACK_BOUNDARY[chrom]
+        wx_center = kbd_x + boundary * white_w
+
+        bw = max(4, int(black_w))
+        bx = int(wx_center - bw / 2)
+        by = int(kbd_y); bh = max(10, int(black_h))
+
+        g_class = _LINEAR_CHROMATIC_MAP[chrom]
+        step_k, sign_k, rel_color = sem_rel[chrom]
+
+        is_ref = (keyboard_ref_class is not None and g_class == keyboard_ref_class)
+        is_pressed = chrom in held_semitones
+        is_tinted = (step_k > 0)
+
+        if is_ref:
+            key_fill = (0, 0, 255)
+        elif is_tinted:
+            rcl = step_k if sign_k == '+' else (12 - step_k) % 12
+            key_fill = _hsl(v_hue(SEM[rcl][3]), 100, 50)
+        else:
+            key_fill = (28, 28, 34)
+
+        # Black key body
+        pygame.draw.rect(surface, key_fill, (bx, by, bw, bh))
+        border_c = (15, 15, 18) if is_ref else (65, 65, 70)
+        pygame.draw.rect(surface, border_c, (bx, by, bw, bh), 3 if is_ref else 1)
+
+        if is_pressed:
+            pygame.draw.rect(surface, (255, 120, 0), (bx, by, bw, bh), 3)
+
+        # Step label at top, black
+        if bw >= 12:
+            if step_k > 0:
+                step_lbl_text = f"{sign_k}{step_k}"
+            elif is_ref:
+                step_lbl_text = "R"
+            else:
+                step_lbl_text = ""
+            st_lbl = fonts['xs'].render(step_lbl_text, True, (15, 15, 18))
+            st_x = bx + (bw - st_lbl.get_width()) // 2
+            surface.blit(st_lbl, (st_x, by + 1))
+
+            # Shape — same size as white keys
+            shape_cy = by + bh // 2 + 4
+            _draw_mini_shape(surface, bx + bw / 2, shape_cy, shape_size, step_k, sign_k, rel_color)
+
+    # ── Octave labels ──
+    if kbd_w > 100:
+        for oct_i, oct_label in enumerate(["O-1", "O0"]):
+            oct_wi = oct_i * WHITES_PER_OCT
+            oct_lx = kbd_x + oct_wi * white_w + (WHITES_PER_OCT * white_w) // 2
+            lbl = fonts['xs'].render(oct_label, True, (70, 70, 75))
+            surface.blit(lbl, (oct_lx - lbl.get_width() // 2, kbd_y + kbd_h - 2))
